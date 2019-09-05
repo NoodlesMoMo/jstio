@@ -1,0 +1,11 @@
+
+FROM envoyproxy/envoy-alpine:v1.11.1
+
+RUN apk add --no-cache bash && \
+    apk add --no-cache curl && \
+    apk add --no-cache net-tools
+
+EXPOSE 80 9901
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["envoy", "-c", "/etc/envoy/envoy.yaml"]

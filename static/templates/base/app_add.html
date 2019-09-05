@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+
+<html>
+    <header>
+        {{ template "header" }}
+    </header>
+
+    <body class="hold-transition skin-blue sidebar-mini">
+        <div class="wrapper">
+
+            {{ template "nav" }}
+
+            <div class="content-wrapper">
+                <section class="content-header">
+                    <h1>Jstio Apps</h1>
+                    <ol class="breadcrumb">
+                        <li><a href="/admin/view/index/"><i class="fa fa-dashboard"></i> Home</a></li>
+                        <li><a href="#">Apps</a></li>
+                    </ol>
+                </section>
+
+                <!-- Main content -->
+                <section class="content">
+                    <div class="row">
+
+                        <div class="col-xs-8 col-xs-offset-2">
+                            <div class="box box-info">
+                                <div class="box-header with-border">
+                                    <h3 class="box-title">创建应用</h3>
+                                </div>
+
+                                <form id="add_app" class="form-horizontal" action="/admin/data/app_add/" method="post" onsubmit="return onAddAppResponse();">
+                                    <div class="box-body">
+                                        <div class="form-group">
+                                            <label for="app_name" class="col-sm-2">应用名称</label>
+                                            <div class="col-sm-10">
+                                                <input class="form-control" type="text" name="app_name">
+                                            </div>
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label for="app_ports" class="col-sm-2">应用端口</label>
+                                            <div class="col-sm-10">
+                                                <input class="form-control" type="text" name="app_ports">
+                                            </div>
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label for="odin_cluster" class="col-sm-2">所属odin集群</label>
+                                            <div class="col-sm-10">
+                                                <select id="odin_cluster" class="form-control" name="odin_cluster" onchange="onClusterSelect(this.options[this.selectedIndex].value)">
+                                                    <option value="venus">venus</option>
+                                                    <option value="test">test</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label for="namespace" class="col-sm-2">Namespace</label>
+                                            <div class="col-sm-10">
+                                                <select id="namespace" class="form-control" name="namespace">
+                                                    <option value="planet">planet</option>
+                                                    <option value="oneclass">oneclass</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label for="env" class="col-sm-2">运行环境</label>
+                                            <div class="col-sm-10">
+                                                <select id="env" class="form-control" name="env">
+                                                    <option value="development">开发</option>
+                                                    <option value="test">测试</option>
+                                                    <option value="gray">灰度</option>
+                                                    <option value="product">生产</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label for="upstream" class="col-sm-2">upstream</label>
+                                            <div class="col-sm-10">
+                                                <select id="upstream" class="form-control" multiple="multiple" name="upstreams">
+                                                    <option value="NULL">NULL</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label for="app_desc" class="col-sm-2">应用描述</label>
+                                            <div class="col-sm-10">
+                                                <textarea class="form-control" rows="3" placeholder="Enter ..." name="description"></textarea>
+                                            </div>
+                                        </div>
+
+                                    </div>
+                                    <div class="box-footer">
+                                        <button type="submit" class="btn btn-success pull-right">确定</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        {{ template "footer" }}
+
+    </body>
+
+    <script>
+        function onAddAppResponse() {
+            $("#add_app").ajaxSubmit(function(message){
+                let response = JSON.parse(message);
+                if(response["code"] == 0){
+                    toastr.success("成功");
+                }else{
+                    toastr.error("Error", message["msg"]);
+                }
+            });
+
+            return false;
+        }
+
+        function onClusterSelect(cluster) {
+            switch (cluster) {
+                case "venus":
+                    $("#namespace").val("planet");
+                    break;
+                case "test":
+                    $("#namespace").val("oneclass");
+                    break;
+            }
+        }
+
+        $(document).ready(function () {
+
+            $.getScript("/static/assets/dist/js/demo.js");
+
+            $("#upstream").select2({
+                closeOnSelect:false,
+                ajax: {
+                    url: "/admin/data/app_list/",
+                    dataType: "json",
+                    delay: 250,
+                    cache: true,
+                    data: function (params) { return {q: params.term};},
+                    processResults: function (res) {
+                        if(res["code"] !== 0) {
+                            return {results: [{"id":1, "text": "null"}]}
+                        }
+                        let apps = res["data"];
+                        let items = [{"id":0, "text": "null"}];
+                        for(let i= 0; i < apps.length; i++) {
+                            items.push({id:apps[i]["ID"], text:apps[i]["app_name"]})
+                        }
+                        return {results: items};
+                    },
+                    tokenSeparators: [',', ' ']
+                }
+            });
+        })
+    </script>
+
+</html>

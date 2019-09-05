@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+
+<html>
+<header>
+    {{ template "header" }}
+
+    <style type="text/css">
+        #mynetwork {
+            width: 1100px;
+            height: 600px;
+            border: 1px solid lightgray;
+        }
+    </style>
+
+    <script type="text/javascript" src="/static/assets/vis/dist/vis.min.js"></script>
+    <link href="/static/assets/vis/dist/vis-network.min.css" rel="stylesheet" type="text/css"/>
+
+</header>
+
+<body class="hold-transition skin-blue sidebar-mini">
+<div class="wrapper">
+
+    {{ template "nav" }}
+
+    <div class="content-wrapper">
+        <section class="content-header">
+            <h1>Topology</h1>
+            <ol class="breadcrumb">
+                <li><a href="/admin/view/index/"><i class="fa fa-dashboard"></i> Home</a></li>
+            </ol>
+        </section>
+
+        <section class="content">
+            <div class="row">
+                <div class="col-xs-12">
+                    <div id="mynetwork"></div>
+                </div>
+            </div>
+        </section>
+
+    </div>
+</div>
+
+{{ template "footer" }}
+
+</body>
+
+<script>
+    function draw() {
+        // create some nodes
+        var nodes = [
+            {id: 0, "label": "Myriel", "group": 1},
+            {id: 1, "label": "Napoleon", "group": 1},
+            {id: 2, "label": "Mlle.Baptistine", "group": 1},
+            {id: 3, "label": "Mme.Magloire", "group": 1},
+            {id: 4, "label": "CountessdeLo", "group": 1},
+            {id: 5, "label": "Geborand", "group": 1},
+            {id: 6, "label": "Champtercier", "group": 1},
+            {id: 7, "label": "Cravatte", "group": 1},
+            {id: 8, "label": "Count", "group": 1},
+            {id: 9, "label": "OldMan", "group": 1},
+            {id: "hello", "label": "Labarre", "group": 2},
+        ];
+
+        // create some edges
+        var edges = [
+            {"from": 1, "to": 0},
+            {"from": 2, "to": 0},
+            {"from": 3, "to": 0},
+            {"from": 3, "to": 2},
+            {"from": 4, "to": 0},
+            {"from": 5, "to": 0},
+            {"from": 6, "to": 0},
+            {"from": 7, "to": 0},
+            {"from": 8, "to": 0},
+            {"from": 9, "to": 0},
+        ];
+
+        // create a network
+        var container = document.getElementById('mynetwork');
+        var data = {
+            nodes: nodes,
+            edges: edges
+        };
+        var options = {
+            nodes: {
+                shape: 'dot',
+                size: 16
+            },
+            physics: {
+                forceAtlas2Based: {
+                    gravitationalConstant: -26,
+                    centralGravity: 0.005,
+                    springLength: 230,
+                    springConstant: 0.18
+                },
+                maxVelocity: 146,
+                solver: 'forceAtlas2Based',
+                timestep: 0.35,
+                stabilization: {iterations: 150}
+            }
+        };
+        var network = new vis.Network(container, data, options);
+
+    }
+</script>
+
+<script>
+    $(document).ready(function () {
+        $.getScript("/static/assets/dist/js/demo.js");
+
+        draw();
+    });
+</script>
+
+</html>

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+
+<html>
+<header>
+    {{ template "header" }}
+</header>
+
+<body class="hold-transition skin-blue sidebar-mini">
+<div class="wrapper">
+
+    {{ template "nav" }}
+
+    <div class="content-wrapper">
+        <section class="content-header">
+            <h1>Help</h1>
+            <ol class="breadcrumb">
+                <li><a href="/admin/view/index/"><i class="fa fa-dashboard"></i> Home</a></li>
+                <li><a href="#">help</a></li>
+            </ol>
+        </section>
+
+        <section class="content">
+            <div class="row"></div>
+        </section>
+    </div>
+</div>
+
+{{ template "footer" }}
+
+</body>
+
+<script>
+    $(document).ready(function () {
+        $.getScript("/static/assets/dist/js/demo.js");
+    });
+</script>
+
+</html>

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+
+<html>
+<header>
+    {{ template "header" }}
+
+    <link rel="stylesheet" href="/static/assets/codemirror/lib/codemirror.css">
+    <link rel="stylesheet" href="/static/assets/codemirror/theme/monokai.css">
+    <link rel="stylesheet" href="/static/assets/codemirror/addon/display/fullscreen.css">
+    <link rel="stylesheet" href="/static/assets/codemirror/addon/hint/show-hint.css">
+
+    <script src="/static/assets/codemirror/lib/codemirror.js"></script>
+    <script src="/static/assets/codemirror/mode/javascript/javascript.js"></script>
+    <script src="/static/assets/codemirror/mode/yaml/yaml.js"></script>
+    <script src="/static/assets/codemirror/mode/javascript/javascript.js"></script>
+    <script src="/static/assets/codemirror/addon/edit/matchbrackets.js"></script>
+    <script src="/static/assets/codemirror/addon/selection/active-line.js"></script>
+    <script src="/static/assets/codemirror/addon/display/fullscreen.js"></script>
+    <script src="/static/assets/codemirror/addon/hint/show-hint.js"></script>
+    <script src="/static/assets/codemirror/addon/hint/anyword-hint.js"></script>
+
+    <script src="/static/assets/js-yaml/lib/demo.js"></script>
+    <script src="/static/assets/js-base64/base64.min.js"></script>
+
+</header>
+
+<body class="hold-transition skin-blue sidebar-mini">
+<div class="wrapper">
+
+    {{ template "nav" }}
+
+    <div class="content-wrapper">
+        <!-- Content Header (Page header) -->
+        <section class="content-header">
+            <h1>Resources</h1>
+            <ol class="breadcrumb">
+                <li><a href="#"><i class="fa fa-dashboard"></i>Home</a></li>
+                <li><a href="#">Resources</a></li>
+            </ol>
+        </section>
+
+        <!-- Main content -->
+        <section class="content">
+
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="box box-info">
+                        <div class="box-header with-border">
+                            <h3 class="box-title">创建资源</h3>
+                        </div>
+
+
+                        <form id="add_resource" class="form-horizontal" action="/admin/data/res_add/" method="post" enctype="application/x-www-form-urlencoded" onsubmit="return onAddResourceResponse();">
+                            <div class="box-body">
+                                <div class="form-group">
+                                    <label for="app_name" class="col-sm-2">所属应用</label>
+                                    <div class="col-sm-10">
+                                        <input class="form-control" type="text" name="app_name" readonly="readonly" value="{{.AppName}}">
+                                    </div>
+                                    <input type="hidden" name="app_id" value="{{.ID}}">
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="name" class="col-sm-2">资源名称</label>
+                                    <div class="col-sm-10">
+                                        <input class="form-control" type="text" name="name">
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="res_type" class="col-sm-2">资源类型</label>
+                                    <div class="col-sm-10">
+                                        <select id="res_type" class="form-control" name="res_type">
+                                            <option value="route">route</option>
+                                            <option value="cluster">cluster</option>
+                                            <option value="endpoint">endpoint</option>
+                                            <option value="listener">listener</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="resource" class="col-sm-2">资源配置</label>
+                                    <div class="col-sm-10">
+                                        <textarea id="yaml_editor"># TODO: add yaml config here ...</textarea>
+                                    </div>
+                                </div>
+
+                                <input type="hidden" name="json_config" id="res_real">
+                                <input type="hidden" name="yaml_config" id="res_yaml">
+
+                                <div class="form-group">
+                                    <div class="col-sm-4">
+                                        <button type="button" class="btn btn-primary btn-sm" onclick="onValidation()">校验</button>
+                                    </div>
+                                    <div class="col-sm-8"></div>
+                                </div>
+
+
+                                <div class="box-footer">
+                                    <button type="submit" class="btn btn-success pull-right">确定</button>
+                                </div>
+
+                            </div>
+                        </form>
+
+                    </div>
+                </div>
+            </div>
+
+        </section>
+    </div>
+</div>
+    {{ template "footer" }}
+</body>
+
+    <script>
+        CodeMirror.velocityContext = "server software env";  //提取到外部，方便从后台获取数据
+        CodeMirror.velocityCustomizedKeywords = "server.ip server.cache software.conf software.version software.tags.count";
+
+        var resource_editor = CodeMirror.fromTextArea(document.getElementById("yaml_editor"),
+            {
+                lineNumbers: true,
+                indentUnit: 4,
+                styleActiveLine: true,
+                matchBrackets: true,
+                lineWrapping: true,
+                mode: 'yaml',
+                theme: 'monokai',
+            });
+
+        //resource_editor.on("cursorActivity", function () {
+            resource_editor.on("change", function () {
+            resource_editor.showHint();
+        });
+
+        resource_editor.on("blur", function () {
+            let content = resource_editor.getValue();
+            let doc = jsyaml.load(content);
+            $("#res_real").attr({"value": Base64.encode(JSON.stringify(doc))});
+            $("#res_yaml").attr({"value": Base64.encode(content)});
+        });
+
+        function onValidation() {
+            try{
+                let yaml_content = resource_editor.getValue();
+                let obj = jsyaml.load(yaml_content);
+                let data = Base64.encode(JSON.stringify(obj));
+                let res_type = $("#res_type").val();
+                let url = "/admin/data/res_validation/" + res_type;
+                $.ajax({
+                    type: "POST",
+                    url: url,
+                    contentType: "application/json;charset=utf-8",
+                    data: data,
+                    success: function (result) {
+                        let response = JSON.parse(result);
+                        if(response["code"] === 0){
+                            toastr.success("校验成功");
+                        } else {
+                            toastr.error("失败", response["msg"]);
+                        }
+                    },
+                    error: function(msg) {
+                        console.log(msg);
+                    }
+                });
+            } catch (e){
+                toastr.error("error", e);
+            }
+        }
+
+        function onAddResourceResponse() {
+            $("#add_resource").ajaxSubmit(function(message){
+                let response = JSON.parse(message);
+                if(response["code"] === 0){
+                    toastr.success("成功");
+                }else{
+                    toastr.error("Error", message["msg"]);
+                }
+
+                console.log(message);
+            });
+
+            return false;
+        }
+
+        $(document).ready(function () {
+            $.getScript("/static/assets/dist/js/demo.js");
+        });
+    </script>
+
+</html>

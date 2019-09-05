@@ -1,0 +1,49 @@
+node:
+  id: {{ .NodeID }}
+  cluster: {{ .AppName }}
+  metadata:
+    odin_cluster: {{ .OdinCluster }}
+    namespace: {{ .Namespace }}
+    env: {{ .Environment }}
+  locality:
+    region: {{ .Region }}
+    zone: unused
+    sub_zone: unused
+watchdog:
+  miss_timeout: 0.2s
+  megamiss_timeout: 1s
+  kill_timeout: 0s
+  multikill_timeout: 0s
+admin:
+  access_log_path: /tmp/admin_access.log
+  profile_path: /tmp/envoy/envoy.prof
+  address:
+    socket_address:
+      protocol: TCP
+      address: 0.0.0.0
+      port_value: {{ .AdminPort }}
+dynamic_resources:
+  ads_config:
+    api_type: GRPC
+    grpc_services:
+      envoy_grpc:
+        cluster_name: xds_manager
+  cds_config: {ads: {}}
+  lds_config: {ads : {}}
+
+static_resources:
+  clusters:
+    - name: xds_manager
+      connect_timeout: 3s
+      type: {{ .AddrType }}
+      lb_policy: ROUND_ROBIN
+      http2_protocol_options: {}
+      load_assignment:
+        cluster_name: xds_manager
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: {{ .XdsManagerAddr }}
+                      port_value: {{ .XdsPort }}

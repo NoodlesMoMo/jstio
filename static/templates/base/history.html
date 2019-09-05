@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+
+<html>
+<header>
+    {{ template "header" }}
+</header>
+
+<body class="hold-transition skin-blue sidebar-mini">
+<div class="wrapper">
+
+    {{ template "nav" }}
+
+    <div class="content-wrapper">
+        <!-- Content Header (Page header) -->
+        <section class="content-header">
+            <h1>History</h1>
+            <ol class="breadcrumb">
+                <li><a href="/admin/view/index/"><i class="fa fa-dashboard"></i> Home</a></li>
+                <li><a href="#">history</a></li>
+            </ol>
+        </section>
+
+        <!-- Main content -->
+        <section class="content">
+            <div class="row">
+                <div class="col-xs-12">
+                    <div class="box">
+                        <div class="box-header">
+                            <h3 class="box-title">应用列表</h3>
+                        </div>
+
+                        <div class="mailbox-controls">
+                            <div class="pull-right">
+                                <div class="btn-group">
+                                    <button type="button" class="btn btn-default btn-sm"><i class="fa fa-chevron-left"></i></button>
+                                    <button type="button" class="btn btn-default btn-sm"><i class="fa fa-chevron-right"></i></button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="box-body">
+                            <table id="history" class="table table-bordered table-hover">
+                                <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Entity</th>
+                                    <th>EntityID</th>
+                                    <th>操作者ID</th>
+                                    <th>操作人</th>
+                                    <th>操作</th>
+                                    <th>状态</th>
+                                    <th>操作时间</th>
+                                </tr>
+                                </thead>
+
+                                <tbody>
+
+                                {{ range $item := . }}
+                                    <tr>
+                                        <td>{{ $item.ID }}</td>
+                                        <td>{{ $item.Entity }}</td>
+                                        <td>{{ $item.EntityId }}</td>
+                                        <td>{{ $item.UserId }}</td>
+                                        <td>{{ $item.UserName }}</td>
+                                        <td>{{ $item.Operate }}</td>
+
+                                        <td>
+                                            {{ if eq $item.Status "success" }}
+                                                <span class="label label-success"> {{$item.Status}} </span>
+                                            {{ else }}
+                                                <span class="label label-danger"> {{$item.Status}} </span>
+                                            {{ end }}
+                                        </td>
+
+                                        <td>{{ $item.CreatedAt}}</td>
+                                    </tr>
+                                {{ end }}
+
+                                </tbody>
+                            </table>
+                        </div>
+                        <!-- /.box-body -->
+                    </div>
+                    <!-- /.box -->
+                </div>
+                <!-- /.col -->
+            </div>
+            <!-- /.row -->
+        </section>
+        <!-- /.content -->
+    </div>
+</div>
+
+{{ template "footer" }}
+
+</body>
+
+<script>
+    $(document).ready(function () {
+        $.getScript("/static/assets/dist/js/demo.js");
+    });
+</script>
+
+</html>

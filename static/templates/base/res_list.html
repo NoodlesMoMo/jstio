@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+
+<html>
+<header>
+    {{ template "header" }}
+</header>
+
+<body class="hold-transition skin-blue sidebar-mini">
+<div class="wrapper">
+
+    {{ template "nav" }}
+
+    <div class="content-wrapper">
+        <section class="content-header">
+            <h1>Resources</h1>
+            <ol class="breadcrumb">
+                <li><a href="/admin/view/index/"><i class="fa fa-dashboard"></i> Home</a></li>
+                <li><a href="#">Resources</a></li>
+            </ol>
+        </section>
+
+        <section class="content">
+            <div class="row">
+                <div class="col-xs-12">
+                    <div class="box">
+                        <div class="box-header">
+                            <h3 class="box-title">资源列表</h3>
+                        </div>
+
+                        <div class="mailbox-controls">
+                            <button type="button" class="btn btn-default btn-sm"><i class="fa fa-refresh"></i></button>
+                            <div class="pull-right">
+                                <div class="btn-group">
+                                    <button type="button" class="btn btn-default btn-sm"><i class="fa fa-chevron-left"></i></button>
+                                    <button type="button" class="btn btn-default btn-sm"><i class="fa fa-chevron-right"></i></button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- /.box-header -->
+                        <div class="box-body">
+                            <table id="apps" class="table table-bordered table-hover">
+                                <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>名称</th>
+                                    <th>所属应用</th>
+                                    <th>资源类型</th>
+                                    <th>创建者</th>
+                                    <th>操作</th>
+                                </tr>
+                                </thead>
+
+                                <tbody>
+
+                                {{ range $app := . }}
+                                    {{ range $res := $app.Resources }}
+                                        <tr>
+                                            <td>{{ $res.ID }}</td>
+                                            <td>{{ $res.Name }}</td>
+                                            <td>{{ $app.Hash }}</td>
+                                            <td>{{ $res.ResType }}</td>
+                                            <td>{{ $app.UserName }}</td>
+                                            <td>
+                                                <div class="mailbox-controls pull-right">
+                                                    <div class="btn-group">
+                                                        <a href="/admin/view/html_res_detail/{{$res.ID}}"><i class="fa fa-info-circle"></i></a>
+                                                        <a href="/admin/view/html_res_edit/{{$res.ID}}"><i class="fa fa-edit"></i></a>
+                                                        <a href="/admin/view/html_res_detail/{{$res.ID}}"><i class="fa fa-cogs"></i></a>
+                                                        <a href="/"><i class="fa fa-trash-o"></i></a>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    {{ end }}
+                                {{ end }}
+
+                                </tbody>
+                            </table>
+                        </div>
+                        <!-- /.box-body -->
+                    </div>
+                    <!-- /.box -->
+                </div>
+                <!-- /.col -->
+            </div>
+            <!-- /.row -->
+        </section>
+        <!-- /.content -->
+    </div>
+</div>
+
+{{ template "footer" }}
+
+</body>
+
+<script>
+    $(document).ready(function () {
+        $.getScript("/static/assets/dist/js/demo.js");
+    });
+</script>
+
+</html>

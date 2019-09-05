@@ -1,0 +1,10 @@
+{{ define "endpoint" }}
+- cluster_name: {{ $.Hash }}
+  endpoints:
+    - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 127.0.0.1
+                port_value: 65535
+{{ end }}
