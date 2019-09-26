@@ -50,6 +50,7 @@
                                             <div class="col-sm-10">
                                                 <select id="odin_cluster" class="form-control" name="odin_cluster" onchange="onClusterSelect(this.options[this.selectedIndex].value)">
                                                     <option value="venus">venus</option>
+                                                    <option value="saturn">saturn</option>
                                                     <option value="test">test</option>
                                                 </select>
                                             </div>
@@ -127,6 +128,9 @@
         function onClusterSelect(cluster) {
             switch (cluster) {
                 case "venus":
+                    $("#namespace").val("planet");
+                    break;
+                case "saturn":
                     $("#namespace").val("planet");
                     break;
                 case "test":

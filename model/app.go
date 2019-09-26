@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ghodss/yaml"
+	"github.com/mohae/deepcopy"
 	"jstio/internel/logs"
+	"math/rand"
 	"path"
 	"strconv"
 	"strings"
@@ -14,9 +16,80 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
+var (
+	_appCacheOnce = sync.Once{}
+	_appCache     *ApplicationCache
+)
+
 func MigrateAppsTables() {
 	app, refer := Application{}, ApplicationReference{}
 	GetDBInstance().AutoMigrate(app, refer)
+}
+
+type ApplicationCache struct {
+	lock  sync.RWMutex
+	cache map[string]*Application
+}
+
+// Warning: don't support cycle pointer in application's xstreams
+func (ac *ApplicationCache) GetActiveApplications() map[string]*Application {
+	ac.lock.RLock()
+	defer ac.lock.RUnlock()
+
+	return deepcopy.Copy(ac.cache).(map[string]*Application)
+}
+
+func (ac *ApplicationCache) cycleAutoReBuild() {
+	tagLog := logs.TaggedLoggerFactory("cycle auto refresh")
+
+	for {
+		rand.Seed(time.Now().UnixNano())
+		r := rand.Intn(10) + 300 // about 5 minute
+		tagLog("").Printf("next schedule will be after %d seconds.\n", r)
+		time.Sleep(time.Duration(r) * time.Second)
+
+		ac.ReBuild()
+	}
+}
+
+func (ac *ApplicationCache) ReBuild() {
+
+	tagLog := logs.FuncTaggedLoggerFactory()
+
+	cache, err := CompleteActiveApps()
+	if err != nil {
+		tagLog("complement apps").WithError(err).Errorln("get active applications error")
+		return
+	}
+
+	ac.lock.Lock()
+	ac.cache = cache
+	ac.lock.Unlock()
+
+	tagLog("complement apps").Println("update application cache success")
+}
+
+func GetApplicationCache() *ApplicationCache {
+	if _appCache != nil {
+		return _appCache
+	}
+
+	tagLog := logs.FuncTaggedLoggerFactory()
+
+	_appCacheOnce.Do(func() {
+		_appCache = &ApplicationCache{
+			lock: sync.RWMutex{},
+		}
+		var err error
+		_appCache.cache, err = CompleteActiveApps()
+		if err != nil {
+			tagLog("create application cache").Errorln("error:", err)
+			panic(err)
+		}
+		go _appCache.cycleAutoReBuild()
+	})
+
+	return _appCache
 }
 
 type Application struct {
@@ -42,38 +115,9 @@ type Application struct {
 
 	ActivePods map[string]PodInfo `gorm:"-"`
 
-	isCompleted bool `gorm:"-"`
+	HasCompleted bool `gorm:"-"`
 
-	Guard *sync.RWMutex `gorm:"-"`
-}
-
-func (a *Application) UnsafeCopy() *Application {
-	a.Guard.RLock()
-	defer a.Guard.RUnlock()
-
-	other := *a
-	other.Guard = &sync.RWMutex{}
-	other.Upstream, other.Downstream = make([]*Application, len(a.Upstream)), make([]*Application, len(a.Downstream))
-	other.Resources, other.Refers = make([]Resource, len(a.Resources)), make([]ApplicationReference, len(a.Refers))
-
-	for idx, app := range a.Upstream {
-		o := *app
-		other.Upstream[idx] = &o
-	}
-	for idx, app := range a.Downstream {
-		o := *app
-		other.Downstream[idx] = &o
-	}
-	for idx, res := range a.Resources {
-		o := res
-		other.Resources[idx] = o
-	}
-	for idx, refer := range a.Refers {
-		o := refer
-		other.Refers[idx] = o
-	}
-
-	return &other
+	//Guard *sync.RWMutex `gorm:"-"`
 }
 
 type ApplicationReference struct {
@@ -125,7 +169,6 @@ func (a *Application) SelectorFormat() string {
 		strings.Trim(a.OdinCluster, "/"),
 		strings.Trim(a.Namespace, "/"),
 		strings.Trim(a.AppName, "/"),
-		//strings.Trim(a.Environment, "/"),
 		defaultRegistrySuffix,
 	)
 }
@@ -158,8 +201,6 @@ func (a *Application) Domain() string {
 		a.OdinCluster,
 		"odin",
 		"sogou",
-		// a.Namespace,
-		// a.Environment,
 	}, ".")
 }
 
@@ -195,7 +236,7 @@ func (a *Application) AfterUpdate() error {
 		}
 	}()
 
-	//err = GetEventNotifier().Push(EventApplicationUpdate, a)
+	// TODO: ...
 
 	return err
 }
@@ -218,13 +259,15 @@ func (a *Application) AfterDelete() error {
 		}
 	}()
 
+	GetApplicationCache().ReBuild()
+
 	err = GetEventNotifier().Push(EventApplicationDelete, a)
 
 	return err
 }
 
-func (a *Application) completeXStream() error {
-	if a.isCompleted {
+func (a *Application) completeXstream() error {
+	if a.HasCompleted {
 		return nil
 	}
 
@@ -243,7 +286,7 @@ func (a *Application) completeXStream() error {
 		return e
 	}
 
-	a.isCompleted = true
+	a.HasCompleted = true
 
 	return nil
 }
@@ -264,7 +307,7 @@ func (a *Application) Add(refers []uint, kind ReferKind) error {
 
 	err = GetDBInstance().Create(a).Error
 	if err == nil {
-		_ = a.completeXStream()
+		_ = a.completeXstream()
 
 		/* add default 4 kinds resources */
 		err = a.AddDefaultResources()
@@ -272,7 +315,11 @@ func (a *Application) Add(refers []uint, kind ReferKind) error {
 			return err
 		}
 
-		err = GetEventNotifier().Push(EventApplicationCreate, a)
+		GetApplicationCache().ReBuild()
+
+		pa := GetApplicationCache().GetActiveApplications()[a.Hash()]
+
+		err = GetEventNotifier().Push(EventApplicationCreate, pa)
 	}
 
 	return err
@@ -352,7 +399,7 @@ func (a *Application) Update(refers []uint, kind ReferKind) error {
 			tagLog("app refer update").WithError(err).Errorf("app_id: %d, refers: %v\n", a.ID, a.Refers)
 			return err
 		}
-		if err = a.completeXStream(); err != nil {
+		if err = a.completeXstream(); err != nil {
 			tagLog("app xstream complete").WithError(err).Errorln("app_id:", a.ID)
 			return err
 		}
@@ -363,6 +410,8 @@ func (a *Application) Update(refers []uint, kind ReferKind) error {
 		_ = GetResourceRender().TryMergeUpstreamResources(a)
 		needPush = true
 	}
+
+	GetApplicationCache().ReBuild()
 
 	if needPush {
 		_ = GetEventNotifier().Push(EventApplicationUpdate, a)
@@ -391,14 +440,13 @@ func GetApplicationById(id uint) (Application, error) {
 	var err error
 
 	app := Application{Model: gorm.Model{ID: id}}
-	app.Guard = &sync.RWMutex{}
 
 	err = GetDBInstance().Preload("Resources").First(&app).Error
 	if err != nil {
 		return app, err
 	}
 
-	err = app.completeXStream()
+	err = app.completeXstream()
 
 	return app, err
 }
@@ -411,9 +459,9 @@ func AllApps(onlyValid bool) ([]Application, error) {
 	db := GetDBInstance().Preload("Resources")
 
 	if onlyValid {
-		err = db.Find(&result, "deleted_at is null").Error
-	} else {
 		err = db.Find(&result).Error
+	} else {
+		err = db.Unscoped().Find(&result).Error
 	}
 
 	return result, err
@@ -432,10 +480,9 @@ func CompleteActiveApps() (map[string]*Application, error) {
 
 	for _, app := range appList {
 		app := app
-		if e := app.completeXStream(); e != nil {
+		if e := app.completeXstream(); e != nil {
 			err = e
 		}
-		app.Guard = &sync.RWMutex{}
 		activeApps[app.Hash()] = &app
 	}
 

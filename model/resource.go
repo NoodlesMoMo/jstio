@@ -29,47 +29,13 @@ type Resource struct {
 
 func (r *Resource) AfterCreate() error {
 	var err error
-
 	defer r.historyRecord(err, OperateCreate)
-
-	/*
-		e := EventNone
-		switch r.ResType {
-		case ResourceTypeRoute:
-			e = EventResRouteCreate
-		case ResourceTypeListener:
-			e = EventResListenerCreate
-		case ResourceTypeEndpoint:
-			e = EventResEndpointCreate
-		}
-
-		err = GetEventNotifier().Push(Event(e), r)
-	*/
-
 	return err
 }
 
 func (r *Resource) AfterUpdate() error {
 	var err error
-
 	defer r.historyRecord(err, OperateUpdate)
-
-	//e := EventNone
-	//switch r.ResType {
-	//case ResourceTypeRoute:
-	//	e = EventResRouteUpdate
-	//case ResourceTypeListener:
-	//	e = EventResListenerUpdate
-	//case ResourceTypeEndpoint:
-	//	e = EventResEndpointUpdate
-	//}
-	//
-	//app, err := GetApplicationById(uint(r.AppID))
-	//if err != nil {
-	//	return err
-	//}
-	//err = GetEventNotifier().Push(Event(e), &app)
-
 	return err
 }
 
@@ -88,13 +54,19 @@ func (r *Resource) AfterDelete() error {
 		e = EventResEndpointDelete
 	}
 
+	GetApplicationCache().ReBuild()
+
 	err = GetEventNotifier().Push(Event(e), r)
 
 	return err
 }
 
 func (r *Resource) Create() error {
-	return GetDBInstance().Create(r).Error
+	err := GetDBInstance().Create(r).Error
+
+	GetApplicationCache().ReBuild()
+
+	return err
 }
 
 func (r *Resource) Update(notify bool) error {
@@ -102,6 +74,8 @@ func (r *Resource) Update(notify bool) error {
 	if err != nil {
 		return err
 	}
+
+	GetApplicationCache().ReBuild()
 
 	e := EventNone
 	switch r.ResType {

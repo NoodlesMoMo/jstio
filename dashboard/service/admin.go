@@ -56,7 +56,8 @@ func (s *AdminService) HTMLAppUpdate(ctx *routing.Context, res string) error {
 }
 
 func (s *AdminService) HTMLAppList(ctx *routing.Context, res string) error {
-	apps, _ := model.CompleteActiveApps()
+	//apps, _ := model.CompleteActiveApps()
+	apps := model.GetApplicationCache().GetActiveApplications()
 
 	return RenderTemplate(ctx, `app_list.html`, apps)
 }
@@ -72,7 +73,6 @@ func (s *AdminService) HTMLResAdd(ctx *routing.Context, res string) error {
 }
 
 func (s *AdminService) HTMLResEdit(ctx *routing.Context, res string) error {
-
 	id, _ := strconv.ParseUint(res, 10, 64)
 	one, err := model.GetResourceById(uint(id))
 	if err != nil {
@@ -152,11 +152,6 @@ func (s *AdminService) AppAdd(ctx *routing.Context, res string) error {
 func (s *AdminService) AppUpstreams(ctx *routing.Context, res string) error {
 	id, _ := strconv.Atoi(res)
 	app, _ := model.GetApplicationById(uint(id))
-
-	//var upstreamIDs []uint
-	//for _, upstream := range app.Upstream {
-	//	upstreamIDs = append(upstreamIDs, upstream.ID)
-	//}
 
 	return SuccessResponse(ctx, app.Upstream)
 }

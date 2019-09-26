@@ -68,7 +68,7 @@ func GetHistoryRecord(page, size int) (int, []History) {
 
 	db.Model(&History{}).Count(&count)
 
-	db.Offset(offset).Limit(size).Find(&result)
+	db.Order("id desc").Offset(offset).Limit(size).Find(&result)
 
 	return count, result
 }

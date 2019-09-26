@@ -126,7 +126,7 @@ func (rt *ResourceTemplateRender) TryMergeUpstreamResources(app *Application) er
 					continue
 				}
 
-				yamlConfig := util.RemoveMultiBlankLineEx(app.Resources[idx].YamlConfig +"\n" + deltaRes)
+				yamlConfig := util.RemoveMultiBlankLineEx(app.Resources[idx].YamlConfig + "\n" + deltaRes)
 				jsonConfig, e := yaml.YAMLToJSON([]byte(yamlConfig))
 				if err != nil {
 					err = e

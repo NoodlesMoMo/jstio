@@ -165,7 +165,8 @@ func (xc *XdsCache) MeshEndpointRefresh(app Selector) error {
 		}
 	}()
 
-	activeApps, err := CompleteActiveApps()
+	//activeApps, err := CompleteActiveApps()
+	activeApps := GetApplicationCache().GetActiveApplications()
 
 	completeApp, ok := activeApps[appHash]
 	if ok {
@@ -223,10 +224,11 @@ func (xc *XdsCache) preload() error {
 
 	tagLog := FuncTaggedLoggerFactory()
 
-	activeApps, err := CompleteActiveApps()
-	if err != nil {
-		return err
-	}
+	//activeApps, err := CompleteActiveApps()
+	//if err != nil {
+	//	return err
+	//}
+	activeApps := GetApplicationCache().GetActiveApplications()
 
 	for appHash, app := range activeApps {
 		xdsRes, err := xc.buildXdsResource(app)
@@ -333,6 +335,8 @@ func (xc *XdsCache) HandleClusterMsg(msg *XdsClusterMsg) {
 		return
 	}
 
+	GetApplicationCache().ReBuild()
+
 	appId, ok := msg.Payload.(float64)
 	if !ok || appId == 0 {
 		tagLog("assert payload").Errorln("invalid payload")
@@ -352,7 +356,7 @@ func (xc *XdsCache) HandleClusterMsg(msg *XdsClusterMsg) {
 	}
 
 	version := xc.ResVersion(xdsRes)
-	if version != msg.Version {
+	if version != msg.Version { // FIXME: miss match
 		tagLog("version mismatch").Errorln("local version:", version, ",msg version:", msg.Version)
 		return
 	}

@@ -1,15 +1,16 @@
 package service
 
 import (
+	"github.com/k0kubun/pp"
 	routing "github.com/qiangxue/fasthttp-routing"
 	"jstio/model"
 )
 
 func DiagnoseService(ctx *routing.Context) error {
-	apps, err := model.CompleteActiveApps()
-	if err != nil {
-		return ErrorResponse(ctx, -1, err)
-	}
+
+	apps := model.GetApplicationCache().GetActiveApplications()
+
+	_, _ = pp.Println(apps)
 
 	return SuccessResponse(ctx, apps)
 }

@@ -385,7 +385,7 @@ func (rb *ResourceBuilder) BuildCustomResource(app *Application, resType Resourc
 			return rb.BuildFastAppEndpoints(app)
 		}
 
-		if err = app.completeXStream(); err != nil {
+		if err = app.completeXstream(); err != nil {
 			return nil, err
 		}
 
