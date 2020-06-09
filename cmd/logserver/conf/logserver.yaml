@@ -1,0 +1,19 @@
+north:
+  disk_log_root: /search/odin/accesslog/
+  elastic_search_url: "http://xdslog.north.shouji.sogou:9200"
+  elastic_index_prefix: envoy-accesslog-
+
+south:
+  disk_log_root: /search/odin/accesslog/
+  elastic_search_url: "http://xdslog.south.shouji.sogou:9200"
+  elastic_index_prefix: envoy-accesslog-
+
+test:
+  disk_log_root: /search/odin/accesslog/
+  elastic_search_url: "http://xdslog.north.shouji.sogou:9200"
+  elastic_index_prefix: envoy-accesslog-
+
+develop:
+  disk_log_root: /tmp/accesslog/
+  elastic_search_url: "http://xdslog.north.shouji.sogou:9200"
+  elastic_index_prefix: envoy-accesslog-

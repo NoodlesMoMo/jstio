@@ -1,0 +1,117 @@
+node:
+  id: {{ .NodeID }}
+  cluster: {{ .AppName }}
+  metadata:
+    odin_cluster: {{ .OdinCluster }}
+    namespace: {{ .Namespace }}
+    env: {{ .Environment }}
+  locality:
+    region: {{ .Region }}
+    zone: unused
+    sub_zone: unused
+watchdog:
+  miss_timeout: 0.2s
+  megamiss_timeout: 1s
+  kill_timeout: 0s
+  multikill_timeout: 0s
+admin:
+  access_log_path: /tmp/admin_access.log
+  profile_path: /tmp/envoy/envoy.prof
+  address:
+    socket_address:
+      protocol: TCP
+      address: 0.0.0.0
+      port_value: {{ .AdminPort }}
+stats_sinks:
+  - name: envoy.metrics_service
+    config:
+      grpc_service:
+        envoy_grpc:
+          cluster_name: metrics_server
+stats_config:
+  use_all_default_tags: false
+  stats_tags:
+    - tag_name: "cluster_name"
+      regex: "^cluster\\.((.+)(?:\\.odin\\.sogou)\\.)" # ^cluster\.((.+)(?:\.odin\.sogou)\.)
+    - tag_name: "worker"
+      regex: "^listener\\.(.+(worker_\\d)\\.)" # ^listener\.(.+(worker_\d)\.)
+    - tag_name: "port"
+      regex: "^listener\\.([\\d\\.]+_(\\d+)\\.)" # ^listener\.([\d\.]+_(\d+)\.)
+    - tag_name: "xds"
+      regex: "^http\\..+((\\wds).+(?:odin\\.sogou)\\.)" # ^http\..+((\wds).+(?:odin\.sogou)\.)
+    - tag_name: "http_app"
+      regex: "^http\\.((.+?(?:venus|saturn)+).*\\.)" # ^http\.((.+?(?:venus|saturn)+).*\.)
+    - tag_name: "srv_worker"
+      regex: "^server\\.((worker_\\d).)" # ^server\.((worker_\d).)
+tracing:
+  http:
+    name: envoy.zipkin
+    config:
+      collector_cluster: jaeger
+      collector_endpoint: /api/v1/spans
+dynamic_resources:
+  ads_config:
+    api_type: GRPC
+    grpc_services:
+      envoy_grpc:
+        cluster_name: xds_manager
+  cds_config: {ads: {}}
+  lds_config: {ads : {}}
+
+static_resources:
+  clusters:
+    - name: xds_manager
+      connect_timeout: 3s
+      type: {{ .AddrType }}
+      lb_policy: ROUND_ROBIN
+      http2_protocol_options: {}
+      load_assignment:
+        cluster_name: xds_manager
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: {{ .XdsManagerAddr }}
+                      port_value: {{ .XdsPort }}
+    - name: xds_logserver
+      connect_timeout: 3s
+      type: {{ .LogAddrType }}
+      lb_policy: ROUND_ROBIN
+      http2_protocol_options: {}
+      load_assignment:
+        cluster_name: xds_logserver
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: {{ .XdsLogServerAddr }}
+                      port_value: {{ .LogServerPort }}
+    - name: metrics_server
+      connect_timeout: 3s
+      type: {{ .MetricsAddrType }}
+      lb_policy: ROUND_ROBIN
+      http2_protocol_options: {}
+      load_assignment:
+        cluster_name: metrics_server
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: {{ .MetricServerAddr }}
+                      port_value: {{ .MetricServerPort }}
+    - name: jaeger
+      connect_timeout: 0.25s
+      type: {{ .LogAddrType }}
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: jaeger
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: {{ .XdsLogServerAddr }}
+                      port_value: {{ .JaegerZipkinPort}}
