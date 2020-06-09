@@ -23,7 +23,7 @@ func GetLocalIPV4Addr() string {
 }
 
 func RemoveMultiBlankLine(src string) string {
-	return multiBlankReg.ReplaceAllString(src, "\n\n")
+	return multiBlankReg.ReplaceAllString(src, "\n")
 }
 
 func RemoveMultiBlankLineEx(src string) string {

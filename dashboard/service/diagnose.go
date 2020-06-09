@@ -1,9 +1,9 @@
 package service
 
 import (
+	"git.sogou-inc.com/iweb/jstio/model"
 	"github.com/k0kubun/pp"
 	routing "github.com/qiangxue/fasthttp-routing"
-	"jstio/model"
 )
 
 func DiagnoseService(ctx *routing.Context) error {

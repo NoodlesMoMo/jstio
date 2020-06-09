@@ -1,8 +1,8 @@
 package handler
 
 import (
-	. "jstio/internel/logs"
-	"jstio/model"
+	. "git.sogou-inc.com/iweb/jstio/internel/logs"
+	"git.sogou-inc.com/iweb/jstio/model"
 	"runtime/debug"
 
 	"github.com/qiangxue/fasthttp-routing"
@@ -22,7 +22,7 @@ func AccessLog(ctx *routing.Context) error {
 
 func Auth(ctx *routing.Context) error {
 	ctx.Set(`authority`, &model.UserData{
-		UserId:   `12345`,
+		UserID:   `12345`,
 		UserName: `jack`,
 		Email:    `jack@sogou-inc.com`,
 	})

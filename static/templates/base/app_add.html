@@ -23,13 +23,14 @@
                 <section class="content">
                     <div class="row">
 
-                        <div class="col-xs-8 col-xs-offset-2">
+                        <div class="col-xs-10 col-xs-offset-1">
                             <div class="box box-info">
                                 <div class="box-header with-border">
                                     <h3 class="box-title">创建应用</h3>
                                 </div>
 
-                                <form id="add_app" class="form-horizontal" action="/admin/data/app_add/" method="post" onsubmit="return onAddAppResponse();">
+                                <!-- <form id="add_app" class="form-horizontal" style="white-space:nowrap;" action="/admin/data/app_add/" method="post" onsubmit="return onAddAppResponse();"> -->
+                                    <form id="add_app" class="form-horizontal" style="white-space:nowrap;" action="/admin/data/app_add/" method="post">
                                     <div class="box-body">
                                         <div class="form-group">
                                             <label for="app_name" class="col-sm-2">应用名称</label>
@@ -39,42 +40,62 @@
                                         </div>
 
                                         <div class="form-group">
-                                            <label for="app_ports" class="col-sm-2">应用端口</label>
+                                            <label for="protocols" class="col-sm-2">代理信息</label>
                                             <div class="col-sm-10">
-                                                <input class="form-control" type="text" name="app_ports">
+                                                <div class="box box-info">
+                                                    <div class="box-body">
+                                                        <div id="protocols_row" class="row">
+                                                            <div class="col-xs-3">
+                                                                <label class="col-xs-4">协议</label>
+                                                                <select class="col-xs-6" name="protocol">
+                                                                    <option value="http">http</option>
+                                                                    <option value="grpc">grpc</option>
+                                                                </select>
+                                                            </div>
+                                                            <div class="col-xs-3">
+                                                                <label class="col-xs-6">应用端口</label>
+                                                                <input name="app_port" class="col-xs-6" type="text">
+                                                            </div>
+
+                                                            <div class="col-xs-3">
+                                                                <label class="col-xs-6">代理端口</label>
+                                                                <input name="proxy_port" class="col-xs-6" type="text" readonly value="80">
+                                                            </div>
+
+                                                            <div class="col-xs-2">
+                                                                <div class="pull-right">
+                                                                    <button type="button" class="btn btn-default btn-sm" onclick="onAddProtocol()"><i class="fa fa-plus-circle"></i></button>
+                                                                </div>
+                                                            </div>
+
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
 
                                         <div class="form-group">
-                                            <label for="odin_cluster" class="col-sm-2">所属odin集群</label>
-                                            <div class="col-sm-10">
-                                                <select id="odin_cluster" class="form-control" name="odin_cluster" onchange="onClusterSelect(this.options[this.selectedIndex].value)">
-                                                    <option value="venus">venus</option>
-                                                    <option value="saturn">saturn</option>
-                                                    <option value="test">test</option>
-                                                </select>
-                                            </div>
-                                        </div>
+                                            <div class="row">
+                                                <div class="col-xs-6">
+                                                    <label for="odin_cluster" class="col-sm-4">odin集群</label>
+                                                    <div class="col-sm-8">
+                                                        <select id="odin_cluster" class="form-control" name="odin_cluster" onchange="onClusterSelect(this.options[this.selectedIndex].value)">
+                                                            <option value="venus">venus</option>
+                                                            <option value="saturn">saturn</option>
+                                                            <option value="test">test</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
 
-                                        <div class="form-group">
-                                            <label for="namespace" class="col-sm-2">Namespace</label>
-                                            <div class="col-sm-10">
-                                                <select id="namespace" class="form-control" name="namespace">
-                                                    <option value="planet">planet</option>
-                                                    <option value="oneclass">oneclass</option>
-                                                </select>
-                                            </div>
-                                        </div>
-
-                                        <div class="form-group">
-                                            <label for="env" class="col-sm-2">运行环境</label>
-                                            <div class="col-sm-10">
-                                                <select id="env" class="form-control" name="env">
-                                                    <option value="development">开发</option>
-                                                    <option value="test">测试</option>
-                                                    <option value="gray">灰度</option>
-                                                    <option value="product">生产</option>
-                                                </select>
+                                                <div class="col-xs-6">
+                                                    <label for="namespace" class="col-sm-4">Namespace</label>
+                                                    <div class="col-sm-8">
+                                                        <select id="namespace" class="form-control" name="namespace">
+                                                            <option value="planet">planet</option>
+                                                            <option value="oneclass">oneclass</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
 
@@ -96,7 +117,8 @@
 
                                     </div>
                                     <div class="box-footer">
-                                        <button type="submit" class="btn btn-success pull-right">确定</button>
+                                        <button id="submit_btn" type="button" class="btn btn-success pull-right">确定</button>
+                                        <!-- <button type="submit" class="btn btn-success pull-right">确定</button> -->
                                     </div>
                                 </form>
                             </div>
@@ -114,15 +136,15 @@
     <script>
         function onAddAppResponse() {
             $("#add_app").ajaxSubmit(function(message){
-                let response = JSON.parse(message);
-                if(response["code"] == 0){
+                //let response = JSON.parse(message);
+                let response = message;
+                if(response["code"] === 0){
                     toastr.success("成功");
+                    window.location.replace("/admin/view/html_app_list/");
                 }else{
-                    toastr.error("Error", message["msg"]);
+                    toastr.error(response["msg"]);
                 }
             });
-
-            return false;
         }
 
         function onClusterSelect(cluster) {
@@ -139,9 +161,54 @@
             }
         }
 
+        function onAddProtocol() {
+            $("#protocols_row").append("<div class='col-xs-3'> \
+                <label class='col-xs-4'>协议</label> \
+                <select class='col-xs-6' name='protocol'> \
+                <option value='grpc'>grpc</option> \
+                <option value='http'>http</option> \
+                </select> \
+                </div> \
+                <div class='col-xs-3'> \
+                <label class='col-xs-6'>应用端口</label> \
+                <input class='col-xs-6' type='text' name='app_port'> \
+                </div> \
+                <div class='col-xs-3'> \
+                <label class='col-xs-6'>代理端口</label> \
+                <input class='col-xs-6' type='text' name='proxy_port'> \
+                </div> \
+                <div class='col-xs-2'> \
+                <div class='pull-right'> \
+                <button type='submit' class='btn btn-default btn-sm' onclick='onAddProtocol()'><i class='fa fa-plus-circle'></i></button>\
+            </div>\
+            </div>\
+            ");
+        }
+
+        function onSubmit() {
+            // $("#add_app").submit();
+            return true;
+        }
+
         $(document).ready(function () {
 
             $.getScript("/static/assets/dist/js/demo.js");
+
+            $("#submit_btn").on("click", function (e) {
+                e.stopImmediatePropagation();
+                e.preventDefault();
+                $("#add_app").trigger("submit");
+            });
+
+            $("#add_app").ajaxForm(function (data) {
+                let response = data;
+                if(response["code"] === 0){
+                    toastr.success("成功");
+                    window.location.replace("/admin/view/html_app_list/");
+                }else{
+                    toastr.error(response["msg"]);
+                }
+            });
 
             $("#upstream").select2({
                 closeOnSelect:false,
@@ -156,9 +223,12 @@
                             return {results: [{"id":1, "text": "null"}]}
                         }
                         let apps = res["data"];
-                        let items = [{"id":0, "text": "null"}];
+                        let items = [];
+                        let app_cluster = $("#odin_cluster").val();
                         for(let i= 0; i < apps.length; i++) {
-                            items.push({id:apps[i]["ID"], text:apps[i]["app_name"]})
+                            if(app_cluster === apps[i]["odin_cluster"]) {
+                                items.push({id:apps[i]["ID"], text:apps[i]["odin_cluster"] + "@" + apps[i]["app_name"]})
+                            }
                         }
                         return {results: items};
                     },

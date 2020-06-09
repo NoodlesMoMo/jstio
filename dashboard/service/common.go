@@ -3,11 +3,12 @@ package service
 import (
 	"encoding/json"
 	"fmt"
-	. "jstio/internel/logs"
 	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
+
+	. "git.sogou-inc.com/iweb/jstio/internel/logs"
 
 	"github.com/qiangxue/fasthttp-routing"
 )
@@ -118,6 +119,7 @@ func baseTypeConvert(in reflect.Value, value string) error {
 
 func SuccessResponse(ctx *routing.Context, data interface{}) error {
 	ctx.Serialize = json.Marshal
+	ctx.SetContentType("application/json; charset=UTF-8")
 
 	return ctx.WriteData(RestResult{Data: data})
 }

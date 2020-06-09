@@ -1,34 +1,38 @@
+<!DOCTYPE html>
+
 <html>
-<header>
-    {{ template "header" }}
-</header>
+    <header>
+        {{ template "header" }}
+    </header>
 
-<body class="hold-transition skin-blue sidebar-mini">
-<div class="wrapper">
+    <body class="hold-transition skin-blue sidebar-mini">
+        <div class="wrapper">
 
-    {{ template "nav" }}
+            {{ template "nav" }}
 
-    <div class="content-wrapper">
-        <section class="content-header">
-            <h1>Jstio Apps</h1>
-            <ol class="breadcrumb">
-                <li><a href="/admin/view/index/"><i class="fa fa-dashboard"></i> Home</a></li>
-                <li><a href="#">Apps</a></li>
-            </ol>
-        </section>
+            <div class="content-wrapper">
+                <section class="content-header">
+                    <h1>Jstio Apps</h1>
+                    <ol class="breadcrumb">
+                        <li><a href="/admin/view/index/"><i class="fa fa-dashboard"></i> Home</a></li>
+                        <li><a href="#">Apps</a></li>
+                    </ol>
+                </section>
 
-        <!-- Main content -->
-        <section class="content">
-            <div class="row">
+                <!-- Main content -->
+                <section class="content">
+                    <div class="row">
 
-                <div class="col-xs-8 col-xs-offset-2">
-                    <div class="box box-info">
-                        <div class="box-header with-border">
-                            <h3 class="box-title">更新应用</h3>
-                        </div>
+                        <div class="col-xs-10 col-xs-offset-1">
+                            <div class="box box-info">
+                                <div class="box-header with-border">
+                                    <h3 class="box-title">更新应用</h3>
+                                </div>
 
-                        <form id="add_app" class="form-horizontal" action="/admin/data/app_update/{{.ID}}" method="post" onsubmit="return onUpdateAppResponse();">
+                        <form id="add_app" class="form-horizontal" style="white-space:nowrap;" action="/admin/data/app_update/{{.ID}}" METHOD="post">
                             <div class="box-body">
+                                <input type="hidden" name="id" value="{{.ID}}">
+
                                 <div class="form-group">
                                     <label for="app_name" class="col-sm-2">应用名称</label>
                                     <div class="col-sm-10">
@@ -36,20 +40,48 @@
                                     </div>
                                 </div>
 
-                                <input type="hidden" name="id" value="{{.ID}}">
-
                                 <div class="form-group">
-                                    <label for="app_ports" class="col-sm-2">应用端口</label>
+                                    <label for="protocols" class="col-sm-2">代理信息</label>
                                     <div class="col-sm-10">
-                                        <input class="form-control" type="text" name="app_ports" value="{{.AppPorts}}">
+                                        <div class="box box-info">
+                                            <div class="box-body">
+                                                <div id="protocols_row" class="row">
+                                                    {{- range $proto := .Protocols -}}
+                                                    <div class="col-xs-3">
+                                                        <label class="col-xs-6">协议</label>
+                                                        <select class="col-xs-6" name="protocol">
+                                                            <option value="http" {{if eq .Protocol "http"}} selected="selected" {{end}}>http</option>
+                                                            <option value="grpc" {{if eq .Protocol "grpc"}} selected="selected" {{end}}>grpc</option>
+                                                        </select>
+                                                    </div>
+                                                    <div class="col-xs-3">
+                                                        <label class="col-xs-6">应用端口</label>
+                                                        <input name="app_port" class="col-xs-6" type="text" value="{{$proto.AppPort}}">
+                                                    </div>
+
+                                                    <div class="col-xs-3">
+                                                        <label class="col-xs-6">代理端口</label>
+                                                        <input name="proxy_port" class="col-xs-6" type="text" value="{{$proto.ProxyPort}}">
+                                                    </div>
+
+                                                    <div class="col-xs-2">
+                                                        <div class="pull-right">
+                                                            <button type="button" class="btn btn-default btn-sm" onclick="onAddProtocol()"><i class="fa fa-plus-circle"></i></button>
+                                                        </div>
+                                                    </div>
+                                                    {{- end -}}
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 
                                 <div class="form-group">
-                                    <label for="odin_cluster" class="col-sm-2">所属odin集群</label>
+                                    <label for="odin_cluster" class="col-sm-2">odin集群</label>
                                     <div class="col-sm-10">
                                         <select id="odin_cluster" class="form-control" name="odin_cluster" onchange="onClusterSelect(this.options[this.selectedIndex].value)">
                                             <option value="venus"{{if eq .OdinCluster "venus"}} selected="selected"{{end}}>venus</option>
+                                            <option value="saturn"{{if eq .OdinCluster "saturn"}} selected="selected"{{end}}>saturn</option>
                                             <option value="test" {{if eq .OdinCluster "test"}} selected="selected"{{end}}>test</option>
                                         </select>
                                     </div>
@@ -66,18 +98,6 @@
                                 </div>
 
                                 <div class="form-group">
-                                    <label for="env" class="col-sm-2">运行环境</label>
-                                    <div class="col-sm-10">
-                                        <select id="env" class="form-control" name="env" value="{{.Environment}}">
-                                            <option value="development">开发</option>
-                                            <option value="test">测试</option>
-                                            <option value="gray">灰度</option>
-                                            <option value="product">生产</option>
-                                        </select>
-                                    </div>
-                                </div>
-
-                                <div class="form-group">
                                     <label for="upstream" class="col-sm-2">upstream</label>
                                     <div class="col-sm-10">
                                         <select id="upstream" class="form-control" multiple="multiple" name="upstreams">
@@ -89,13 +109,13 @@
                                 <div class="form-group">
                                     <label for="app_desc" class="col-sm-2">应用描述</label>
                                     <div class="col-sm-10">
-                                        <textarea class="form-control" rows="3" name="description" value="{{.Description}}"></textarea>
+                                        <textarea class="form-control" rows="3" name="description">{{.Description}}</textarea>
                                     </div>
                                 </div>
 
                             </div>
                             <div class="box-footer">
-                                <button type="submit" class="btn btn-success pull-right">确定</button>
+                                <button type="button" class="btn btn-success pull-right" onclick="onUpdateAppSubmit()">确定</button>
                             </div>
                         </form>
                     </div>
@@ -111,22 +131,48 @@
 </body>
 
 <script>
-    function onUpdateAppResponse() {
+    function onUpdateAppSubmit() {
         $("#add_app").ajaxSubmit(function(message){
-            let response = JSON.parse(message);
-            if(response["code"] == 0){
+            //let response = JSON.parse(message);
+            let response = message;
+            if(response["code"] === 0){
                 toastr.success("成功");
+                window.location.replace("/admin/view/html_app_list/");
             }else{
-                toastr.error("Error", message["msg"]);
+                toastr.error(response["msg"]);
             }
         });
+    }
 
-        return false;
+    function onAddProtocol() {
+        $("#protocols_row").append("<div class='col-xs-3'> \
+            <label class='col-xs-6'>协议</label>\
+            <select class='col-xs-6' name='protocol'> \
+                <option value='grpc'>grpc</option> \
+                <option value='http'>http</option> \
+            </select> \
+        </div> \
+        <div class='col-xs-3'> \
+            <label class='col-xs-6'>应用端口</label>\
+            <input class='col-xs-6' type='text' name='app_port'> \
+        </div> \
+        <div class='col-xs-3'>\
+            <label class='col-xs-6'>代理端口</label>\
+            <input class='col-xs-6' type='text' name='proxy_port'> \
+        </div> \
+        <div class='col-xs-2'>\
+            <div class='pull-right'> \
+                <button type='button' class='btn btn-default btn-sm' onclick='onAddProtocol()'><i class='fa fa-plus-circle'></i></button>\
+            </div>\
+        </div>");
     }
 
     function onClusterSelect(cluster) {
         switch (cluster) {
             case "venus":
+                $("#namespace").val("planet");
+                break;
+            case "saturn":
                 $("#namespace").val("planet");
                 break;
             case "test":
@@ -141,6 +187,7 @@
 
 
         $("#upstream").select2({
+            closeOnSelect:false,
             ajax: {
                 url: "/admin/data/app_list/",
                 dataType: "json",
@@ -152,9 +199,19 @@
                         return {results: [{"id":0, "text": "null"}]}
                     }
                     let apps = res["data"];
-                    let items = [{"id":0, "text": "null"}];
-                    for(let i= 0; i < apps.length; i++) {
-                        items.push({id:apps[i]["ID"], text:apps[i]["app_name"]})
+                    let items = [];
+                    let appId = {{.ID}};
+                    let app_cluster = $("#odin_cluster").val();
+                    if(apps != null) {
+                        for(let i= 0; i < apps.length; i++) {
+                            if(appId === apps[i]["ID"]) { // ignore self
+                                continue;
+                            }
+                            if(app_cluster !== apps[i]["odin_cluster"]) {
+                                continue;
+                            }
+                            items.push({id:apps[i]["ID"], text:apps[i]["odin_cluster"] + "@" + apps[i]["app_name"]})
+                        }
                     }
                     return {results: items};
                 },
@@ -167,15 +224,18 @@
             url: "/admin/data/app_upstreams/{{.ID}}",
             dataType: "json",
             success: function (result) {
-                console.log(result);
-
-                for(var i=0; i<result["data"].length; i++) {
-                    let item = result["data"][i];
-                    console.log(item);
-                    let opt = new Option(item["app_name"], item["ID"], true, true);
-                    $("#upstream").append(opt);
+                let upstream = $("#upstream");
+                if(result["data"] == null){
+                    //upstream.append(new Option("null", 0, true, true));
+                } else {
+                    for(var i=0; i<result["data"].length; i++) {
+                        let item = result["data"][i];
+                        console.log(item);
+                        let opt = new Option(item["odin_cluster"]+"@"+item["app_name"], item["ID"], true, true);
+                        upstream.append(opt);
+                    }
+                    upstream.trigger("change");
                 }
-                $("#upstream").trigger("change");
             }
         })
     })

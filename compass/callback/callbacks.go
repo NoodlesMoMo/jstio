@@ -2,19 +2,23 @@ package callback
 
 import (
 	"context"
+	"git.sogou-inc.com/iweb/jstio/model"
 	v2 "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/peer"
-	"jstio/model"
 	"strings"
 
-	. "jstio/internel/logs"
+	. "git.sogou-inc.com/iweb/jstio/internel/logs"
 )
 
 type XdsStreamCallbacks struct {
 }
 
 func humanTyped(reqType string) string {
+	if reqType == "" {
+		return "None"
+	}
+
 	return strings.TrimPrefix(reqType, model.EnvoyTypePrefix)
 }
 
@@ -46,8 +50,12 @@ func (x *XdsStreamCallbacks) OnStreamClosed(streamID int64) {
 func (x *XdsStreamCallbacks) OnStreamRequest(streamID int64, req *v2.DiscoveryRequest) error {
 
 	Logger.WithFields(logrus.Fields{
-		"stream_id": streamID,
-		"type":      humanTyped(req.TypeUrl),
+		"stream_id":     streamID,
+		"type":          humanTyped(req.TypeUrl),
+		"version":       req.VersionInfo,
+		"resp_nonce":    req.ResponseNonce,
+		"error":         req.ErrorDetail,
+		"resource_name": req.ResourceNames,
 	}).Infoln("on stream request:", req.Node.Id)
 
 	return nil
@@ -55,8 +63,14 @@ func (x *XdsStreamCallbacks) OnStreamRequest(streamID int64, req *v2.DiscoveryRe
 
 func (x *XdsStreamCallbacks) OnStreamResponse(streamID int64, req *v2.DiscoveryRequest, resp *v2.DiscoveryResponse) {
 	Logger.WithFields(logrus.Fields{
-		"stream_id": streamID,
-		"type":      humanTyped(req.TypeUrl),
+		"stream_id":    streamID,
+		"type":         humanTyped(req.TypeUrl),
+		"resp_type":    humanTyped(resp.TypeUrl),
+		"req_version":  req.VersionInfo,
+		"resp_version": resp.VersionInfo,
+		"req_nonce":    req.ResponseNonce,
+		"resp_nonce":   resp.Nonce,
+		"req_error":    req.ErrorDetail,
 	}).Infoln("on stream response")
 }
 

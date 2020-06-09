@@ -1,13 +1,12 @@
 package internel
 
 import (
-	"jstio/internel/logs"
+	"context"
+	"git.sogou-inc.com/iweb/jstio/internel/logs"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
-
-	"github.com/sirupsen/logrus"
 )
 
 type exitHooksEntry struct {
@@ -34,7 +33,7 @@ func (gs *GracefulStopper) RegistryExitHook(name string, fn func() error) {
 	gs.atExitHooks = append(gs.atExitHooks, exitHooksEntry{name, fn})
 }
 
-func (gs *GracefulStopper) RunUntilStop(log *logrus.Logger) {
+func (gs *GracefulStopper) RunUntilStop(cancel context.CancelFunc) {
 	sc := make(chan os.Signal)
 	signal.Notify(sc)
 
@@ -48,13 +47,16 @@ func (gs *GracefulStopper) RunUntilStop(log *logrus.Logger) {
 				tagLog(entry.name).Println("executing signal:", s)
 				e := entry.fn()
 				if e != nil {
-					code += 1 // FIXME: > 255
+					code++ // FIXME: > 255
 					tagLog(entry.name).Errorln(e)
 				} else {
 					tagLog(entry.name).Warningln("success")
 				}
 			}
+			cancel()
 			os.Exit(code)
+		case syscall.SIGURG:
+			// TODO: go1.14
 		default:
 			tagLog(s.String()).Println("un-expected signal caught")
 		}

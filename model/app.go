@@ -1,17 +1,29 @@
 package model
 
 import (
+	"bufio"
+	"bytes"
+	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ghodss/yaml"
-	"github.com/mohae/deepcopy"
-	"jstio/internel/logs"
+	eev2 "github.com/envoyproxy/go-control-plane/envoy/api/v2/endpoint"
 	"math/rand"
 	"path"
-	"strconv"
+	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
+
+	"git.sogou-inc.com/iweb/jstio/internel/logs"
+	v2 "github.com/envoyproxy/go-control-plane/envoy/api/v2"
+	"github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
+	"github.com/envoyproxy/go-control-plane/pkg/cache"
+	"github.com/ghodss/yaml"
+	"github.com/golang/protobuf/jsonpb"
+	"github.com/mohae/deepcopy"
 
 	"github.com/jinzhu/gorm"
 )
@@ -22,8 +34,7 @@ var (
 )
 
 func MigrateAppsTables() {
-	app, refer := Application{}, ApplicationReference{}
-	GetDBInstance().AutoMigrate(app, refer)
+	GetDBInstance().AutoMigrate(Application{})
 }
 
 type ApplicationCache struct {
@@ -31,7 +42,7 @@ type ApplicationCache struct {
 	cache map[string]*Application
 }
 
-// Warning: don't support cycle pointer in application's xstreams
+// Warning: don't support cycle pointer in application's Xstreams
 func (ac *ApplicationCache) GetActiveApplications() map[string]*Application {
 	ac.lock.RLock()
 	defer ac.lock.RUnlock()
@@ -42,8 +53,9 @@ func (ac *ApplicationCache) GetActiveApplications() map[string]*Application {
 func (ac *ApplicationCache) cycleAutoReBuild() {
 	tagLog := logs.TaggedLoggerFactory("cycle auto refresh")
 
+	rand.Seed(time.Now().UnixNano())
+
 	for {
-		rand.Seed(time.Now().UnixNano())
 		r := rand.Intn(10) + 300 // about 5 minute
 		tagLog("").Printf("next schedule will be after %d seconds.\n", r)
 		time.Sleep(time.Duration(r) * time.Second)
@@ -56,14 +68,14 @@ func (ac *ApplicationCache) ReBuild() {
 
 	tagLog := logs.FuncTaggedLoggerFactory()
 
-	cache, err := CompleteActiveApps()
+	_cache, err := CompleteActiveApps()
 	if err != nil {
 		tagLog("complement apps").WithError(err).Errorln("get active applications error")
 		return
 	}
 
 	ac.lock.Lock()
-	ac.cache = cache
+	ac.cache = _cache
 	ac.lock.Unlock()
 
 	tagLog("complement apps").Println("update application cache success")
@@ -92,76 +104,260 @@ func GetApplicationCache() *ApplicationCache {
 	return _appCache
 }
 
+type ApplicationProtocols []ApplicationProtocol
+
+type ApplicationProtocol struct {
+	Protocol  string `json:"protocol"`
+	Domain    string `json:"domain"`
+	AppPort   uint32 `json:"app_port"`
+	ProxyPort uint32 `json:"proxy_port"`
+
+	OwnerRef *Application `json:"-"`
+}
+
+func (aps ApplicationProtocols) Value() (driver.Value, error) {
+	return json.Marshal(aps)
+}
+
+func (aps *ApplicationProtocols) Scan(v interface{}) error {
+	var err error
+	switch t := v.(type) {
+	case string:
+		err = json.Unmarshal([]byte(t), aps)
+	case []byte:
+		err = json.Unmarshal(t, aps)
+	default:
+		err = fmt.Errorf("application-protocols: unsupport scan type %T", v)
+	}
+
+	return err
+}
+
+func (aps ApplicationProtocols) Len() int {
+	return len(aps)
+}
+
+func (aps ApplicationProtocols) Less(i, j int) bool {
+	return aps[i].ProxyPort < aps[j].ProxyPort
+}
+
+func (aps ApplicationProtocols) Swap(i, j int) {
+	aps[i], aps[j] = aps[j], aps[i]
+}
+
+func (aps *ApplicationProtocols) Pop(domain string) *ApplicationProtocol {
+	for idx, ap := range *aps {
+		if ap.Domain == domain {
+			*aps = append((*aps)[:idx], (*aps)[idx+1:]...)
+			return &ap
+		}
+	}
+	return nil
+}
+
+func (aps *ApplicationProtocols) ApplyOwnerRefer(app *Application) {
+	for idx, proto := range *aps {
+		(*aps)[idx].OwnerRef = app
+		if proto.Domain == "" {
+			if proto.Protocol == ProtocolHTTP {
+				(*aps)[idx].Domain = app.Domain()
+				continue
+			}
+			(*aps)[idx].Domain = strings.Join([]string{
+				app.AppName,
+				proto.Protocol,
+				app.OdinCluster,
+				SOUGOSLD,
+			}, ".")
+		}
+	}
+}
+
+func (aps *ApplicationProtocols) ResetOwnerRefer(app *Application) {
+	for idx := range *aps {
+		(*aps)[idx].OwnerRef = app
+	}
+}
+
+type ApplicationXstreams []uint
+
+func (ax ApplicationXstreams) IDs() []uint {
+	return ax
+}
+
+func (ax ApplicationXstreams) Value() (driver.Value, error) {
+	return json.Marshal(ax)
+}
+
+func (ax *ApplicationXstreams) Scan(v interface{}) error {
+	var err error
+	switch t := v.(type) {
+	case string:
+		err = json.Unmarshal([]byte(t), ax)
+	case []byte:
+		err = json.Unmarshal(t, ax)
+	default:
+		err = fmt.Errorf("application-protocols: unsupport scan type %T", v)
+	}
+	return err
+}
+
+func (ax *ApplicationXstreams) Add(id uint) bool {
+	if id == 0 {
+		return false
+	}
+
+	pos := 0
+	for idx, one := range *ax {
+		if one == id {
+			return false
+		} else if one > id {
+			pos = idx
+			break
+		} else {
+			pos++
+		}
+	}
+
+	*ax = append(*ax, 0)
+	copy((*ax)[pos+1:], (*ax)[pos:])
+	(*ax)[pos] = id
+
+	return true
+}
+
+func (ax *ApplicationXstreams) Remove(id uint) bool {
+	if id == 0 {
+		return false
+	}
+	for idx, one := range *ax {
+		if one == id {
+			*ax = append((*ax)[:idx], (*ax)[idx+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func (ax *ApplicationXstreams) Diff(ox *ApplicationXstreams) ([]uint, []uint) {
+	as, os := make(map[uint]bool, 0), make(map[uint]bool, 0)
+	for _, id := range *ax {
+		as[id] = false
+	}
+	for _, id := range *ox {
+		os[id] = false
+	}
+
+	for id, _ := range as {
+		if _, ok := os[id]; ok {
+			delete(as, id)
+			delete(os, id)
+		}
+	}
+
+	decrease, increase := ApplicationXstreams{}, ApplicationXstreams{}
+	for id, _ := range as {
+		increase.Add(id)
+	}
+	for id, _ := range os {
+		decrease.Add(id)
+	}
+
+	return decrease.IDs(), increase.IDs()
+}
+
+//func (ax *ApplicationXstreams) Diff(ox *ApplicationXstreams) []uint {
+//	axLen, oxLen := len(*ax), len(*ox)
+//	if axLen == 0 {
+//		return *ox
+//	}
+//	if oxLen == 0 {
+//		return nil
+//	}
+//
+//	set := make([]uint, 0)
+//	oIdx := 0
+//	for i := 0; i < axLen && oIdx < oxLen; {
+//		oid := (*ox)[oIdx]
+//		aid := (*ax)[i]
+//		if aid < oid {
+//			i++
+//			continue
+//		} else if aid == oid {
+//			i++
+//			oIdx++
+//			continue
+//		} else {
+//			set = append(set, oid)
+//			oIdx++
+//		}
+//	}
+//
+//	if oIdx < oxLen {
+//		set = append(set, (*ox)[oIdx:]...)
+//	}
+//
+//	return set
+//}
+
+func (ax *ApplicationXstreams) Union(ox *ApplicationXstreams) []uint {
+	buf := make(map[uint]struct{})
+	for _, id := range *ax {
+		buf[id] = struct{}{}
+	}
+	for _, id := range *ox {
+		buf[id] = struct{}{}
+	}
+
+	set := make([]uint, 0)
+	for k := range buf {
+		set = append(set, k)
+	}
+
+	tmp := (ApplicationXstreams)(set)
+	sort.Sort(tmp)
+
+	return tmp
+}
+
+func (ax *ApplicationXstreams) Merge(ox *ApplicationXstreams) []uint {
+	*ax = ax.Union(ox)
+	return *ax
+}
+
+func (ax ApplicationXstreams) Len() int {
+	return len(ax)
+}
+
+func (ax ApplicationXstreams) Less(i, j int) bool {
+	return ax[i] < ax[j]
+}
+
+func (ax ApplicationXstreams) Swap(i, j int) {
+	ax[i], ax[j] = ax[j], ax[i]
+}
+
 type Application struct {
 	gorm.Model
 
-	AppName      string `gorm:"not null; unique_index:idx_cluster; comment:'应用名称'" json:"app_name"`
-	OdinCluster  string `gorm:"not null; unique_index:idx_cluster; comment:'odin集群名称'" json:"odin_cluster"`
-	Namespace    string `gorm:"not null; unique_index:idx_cluster;" json:"namespace"`
-	Environment  string `gorm:"not null; unique_index:idx_cluster; comment:'运行环境'" json:"env"`
-	CustomDomain string `gorm:"not null; default:''" json:"custom_domain"`
-	AppPorts     string `gorm:"not null" json:"app_ports"`
-	Version      string `gorm:"not null; default:'v1'; comment:'版本'" json:"version"`
-	Status       string `gorm:"not null; default:'pending'" json:"status"`
-	UserId       string `gorm:"not null; comment:'创建人'" json:"user_id"`
-	UserName     string `gorm:"not null; comment:'创建人姓名'" json:"user_name"`
-	Description  string `gorm:"comment:'描述'" json:"description"`
+	AppName       string               `gorm:"not null; unique_index:idx_cluster;" json:"app_name"`
+	OdinCluster   string               `gorm:"not null; unique_index:idx_cluster;" json:"odin_cluster"`
+	Namespace     string               `gorm:"not null; unique_index:idx_cluster;" json:"namespace"`
+	Protocols     ApplicationProtocols `gorm:"not null; type:varchar(255)" json:"protocols"`
+	UpstreamIDs   ApplicationXstreams  `gorm:"not null; type:varchar(255)" json:"upstream_ids"`
+	DownstreamIDs ApplicationXstreams  `gorm:"not null; type:varchar(255)" json:"downstream_ids"`
+	Version       string               `gorm:"not null; default:'v1';" json:"version"`    // FIXME:
+	Status        string               `gorm:"not null; default:'pending'" json:"status"` // FIXME:
+	UserID        string               `gorm:"not null;" json:"user_id"`                  // FIXME
+	UserName      string               `gorm:"not null;" json:"user_name"`                // FIXME
+	Description   string               `gorm:"not null; default:''" json:"description"`   // FIXME
 
 	Upstream   []*Application `gorm:"-"`
 	Downstream []*Application `gorm:"-"`
 
-	Resources []Resource             `gorm:"foreignkey:AppID;"`
-	Refers    []ApplicationReference `gorm:"foreignkey:AppID;"`
-
-	ActivePods map[string]PodInfo `gorm:"-"`
+	Resources []Resource `gorm:"ForeignKey:AppID"`
 
 	HasCompleted bool `gorm:"-"`
-
-	//Guard *sync.RWMutex `gorm:"-"`
-}
-
-type ApplicationReference struct {
-	gorm.Model
-
-	AppID     uint   `gorm:"not null; index:idx_app_id; unique_index:idx_id"`
-	ReferID   uint   `gorm:"not null; index:idx_refer; unique_index:idx_id"`
-	ReferKind string `gorm:"not null; unique_index:idx_id"`
-}
-
-func (r *ApplicationReference) String() string {
-	return fmt.Sprintf("%d->%d~%s", r.AppID, r.ReferID, r.ReferKind)
-}
-
-func GetAppRefersById(id uint) (upstream, downstream []uint, err error) {
-	if id == 0 {
-		return
-	}
-
-	db := GetDBInstance()
-	result := make([]ApplicationReference, 0)
-	err = db.Where("app_id = ? and refer_id != 0", id).Or("refer_id = ? and app_id != 0", id).Find(&result).Error
-	if err != nil {
-		return
-	}
-
-	for _, row := range result {
-
-		if row.AppID == id {
-			if row.ReferKind == ReferKindUpstream {
-				upstream = append(upstream, row.ReferID)
-			} else {
-				downstream = append(downstream, row.ReferID)
-			}
-		} else {
-			if row.ReferKind == ReferKindUpstream {
-				downstream = append(downstream, row.AppID)
-			} else {
-				upstream = append(upstream, row.AppID)
-			}
-		}
-	}
-
-	return
 }
 
 func (a *Application) SelectorFormat() string {
@@ -182,7 +378,6 @@ func (a *Application) SelectorScan(key string) error {
 	a.OdinCluster = seps[1]
 	a.Namespace = seps[2]
 	a.AppName = seps[3]
-	a.Environment = seps[4]
 
 	return nil
 }
@@ -192,60 +387,47 @@ func (a *Application) Hash() string {
 }
 
 func (a *Application) Domain() string {
-	if a.CustomDomain != "" {
-		return a.CustomDomain
-	}
-
 	return strings.Join([]string{
 		a.AppName,
 		a.OdinCluster,
-		"odin",
-		"sogou",
+		SOUGOSLD,
 	}, ".")
 }
 
-func (a *Application) SelfAddresses() []string {
-	address := make([]string, 0)
-	for _, port := range strings.Split(a.AppPorts, ";") {
-		address = append(address, localhost+":"+port)
-	}
-	return address
+func (a *Application) BeforeUpdate(tx *gorm.DB) error {
+	sort.Sort(a.UpstreamIDs)
+	sort.Sort(a.DownstreamIDs)
+	return nil
 }
 
-func (a *Application) SelfPorts() []uint32 {
-	ports := make([]uint32, 0)
-
-	for _, sp := range strings.Split(a.AppPorts, ";") {
-		port, err := strconv.Atoi(sp)
-		if err == nil && port > 0 {
-			ports = append(ports, uint32(port))
-		}
-	}
-
-	return ports
+func (a *Application) BeforeCreate(tx *gorm.DB) error {
+	sort.Sort(a.UpstreamIDs)
+	sort.Sort(a.DownstreamIDs)
+	return nil
 }
 
-func (a *Application) AfterUpdate() error {
+func (a *Application) AfterUpdate(tx *gorm.DB) error {
 	var err error
 
 	defer func() {
 		if err == nil {
-			RecordSuccess(a.UserId, a.UserName, `application`, OperateUpdate, a.ID)
+			RecordSuccess(a.UserID, a.UserName, `application`, OperateUpdate, a.ID)
 		} else {
-			RecordFailure(a.UserId, a.UserName, `application`, OperateUpdate, a.ID)
+			RecordFailure(a.UserID, a.UserName, `application`, OperateUpdate, a.ID)
 		}
 	}()
-
-	// TODO: ...
 
 	return err
 }
 
-func (a *Application) AfterSave() error {
+func (a *Application) AfterCreate(tx *gorm.DB) error {
+	var err error
 
-	RecordSuccess(a.UserId, a.UserName, `application`, OperateCreate, a.ID)
+	err = a.UpdateReference(tx)
 
-	return nil
+	RecordSuccess(a.UserID, a.UserName, `application`, OperateCreate, a.ID)
+
+	return err
 }
 
 func (a *Application) AfterDelete() error {
@@ -253,9 +435,9 @@ func (a *Application) AfterDelete() error {
 
 	defer func() {
 		if err == nil {
-			RecordSuccess(a.UserId, a.UserName, `application`, OperateCreate, a.ID)
+			RecordSuccess(a.UserID, a.UserName, `application`, OperateCreate, a.ID)
 		} else {
-			RecordFailure(a.UserId, a.UserName, `application`, OperateCreate, a.ID)
+			RecordFailure(a.UserID, a.UserName, `application`, OperateCreate, a.ID)
 		}
 	}()
 
@@ -266,24 +448,23 @@ func (a *Application) AfterDelete() error {
 	return err
 }
 
-func (a *Application) completeXstream() error {
+func (a *Application) loadApplicationXstream() error {
 	if a.HasCompleted {
 		return nil
 	}
 
 	db := GetDBInstance()
 
-	upstreamIds, downstreamIds, err := GetAppRefersById(a.ID)
-	if err != nil {
-		return err
+	if a.UpstreamIDs.Len() > 0 {
+		if e := db.Where(a.UpstreamIDs.IDs()).Find(&a.Upstream).Error; e != nil {
+			return e
+		}
 	}
 
-	if e := db.Where(upstreamIds).Find(&a.Upstream).Error; e != nil {
-		return e
-	}
-
-	if e := db.Where(downstreamIds).Find(&a.Downstream).Error; e != nil {
-		return e
+	if a.DownstreamIDs.Len() > 0 {
+		if e := db.Where(a.DownstreamIDs.IDs()).Find(&a.Downstream).Error; e != nil {
+			return e
+		}
 	}
 
 	a.HasCompleted = true
@@ -291,38 +472,67 @@ func (a *Application) completeXstream() error {
 	return nil
 }
 
-func (a *Application) completeResources() error {
-	return GetDBInstance().Find(&a.Resources, "app_id=?", a.ID).Error
-}
-
-func (a *Application) Add(refers []uint, kind ReferKind) error {
+func (a *Application) Add() error {
 	var err error
+	tagLog := logs.FuncTaggedLoggerFactory()
 
-	for _, referId := range refers {
-		a.Refers = append(a.Refers, ApplicationReference{
-			ReferID:   referId,
-			ReferKind: kind,
-		})
-	}
+	tx := GetDBInstance().Model(a).Begin()
 
-	err = GetDBInstance().Create(a).Error
-	if err == nil {
-		_ = a.completeXstream()
-
-		/* add default 4 kinds resources */
-		err = a.AddDefaultResources()
-		if err != nil {
-			return err
+	defer func() {
+		if err == nil {
+			tx.Commit()
+			GetApplicationCache().ReBuild()
+			if pa, ok := GetApplicationCache().GetActiveApplications()[a.Hash()]; !ok {
+				err = errors.New("cache app error")
+			} else {
+				err = GetEventNotifier().Push(EventApplicationCreate, pa)
+			}
+		} else {
+			tx.Rollback()
 		}
 
-		GetApplicationCache().ReBuild()
+		if err == nil {
+			tagLog(a.Hash()).Println("create success")
+		} else {
+			tagLog(a.Hash()).WithError(err).Errorln("create failed")
+		}
+	}()
 
-		pa := GetApplicationCache().GetActiveApplications()[a.Hash()]
-
-		err = GetEventNotifier().Push(EventApplicationCreate, pa)
+	if err = a.loadApplicationXstream(); err != nil {
+		return err
 	}
 
+	if err = a.AddDefaultResources(); err != nil {
+		return err
+	}
+
+	err = tx.Create(a).Error
+
 	return err
+}
+
+func (a *Application) UpdateReference(tx *gorm.DB) error {
+	var err error
+
+	if a.UpstreamIDs.Len() == 0 {
+		return nil
+	}
+
+	var upstreams []Application
+
+	if err = tx.Where(a.UpstreamIDs.IDs()).Find(&upstreams).Error; err != nil {
+		return err
+	}
+
+	for _, upstream := range upstreams {
+		if upstream.DownstreamIDs.Add(a.ID) {
+			if err = tx.Model(upstream).UpdateColumn(`downstream_ids`, upstream.DownstreamIDs).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func (a *Application) AddDefaultResources() error {
@@ -342,9 +552,8 @@ func (a *Application) AddDefaultResources() error {
 
 		jsonCfg, err := yaml.YAMLToJSON(yamlCfg)
 		if err != nil {
-			return fmt.Errorf("yaml to json, appID: %d, error: %s", a.ID, err.Error())
+			return fmt.Errorf("yaml to json, appID: %d, resType: %s, error: %s", a.ID, resType, err.Error())
 		}
-
 		res := Resource{
 			AppID:      a.ID,
 			Name:       a.Hash() + "_" + resType,
@@ -352,91 +561,47 @@ func (a *Application) AddDefaultResources() error {
 			Config:     string(jsonCfg),
 			YamlConfig: string(yamlCfg),
 		}
-
-		if err = res.Create(); err != nil {
-			return err
-		}
+		a.Resources = append(a.Resources, res)
 	}
 
 	return nil
 }
 
-func (a *Application) Update(refers []uint, kind ReferKind) error {
+func (a *Application) Update() error {
 	var err error
 
 	tagLog := logs.FuncTaggedLoggerFactory()
 
-	old, err := GetApplicationById(a.ID)
-	if err != nil {
-		tagLog("get application").WithError(err).Errorln("app_id:", a.ID)
+	tx := GetDBInstance().Model(a).Preload("Resources").Begin()
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+			tagLog(a.Hash()).WithError(err).Errorln("update failed")
+		} else {
+			tagLog(a.Hash()).Println("update success")
+		}
+	}()
+
+	if err = a.repairApplicationRelations(tx); err != nil {
+		tagLog("repair app relations").WithError(err).Error("app_id:", a.ID)
 		return err
 	}
 
-	needPush := (a.Hash() != old.Hash()) || (a.AppPorts != old.AppPorts)
-
-	db := GetDBInstance()
-	if err = db.Model(a).Update(a).Error; err != nil {
+	if err = tx.Update(a).Error; err != nil {
 		tagLog("app update").WithError(err).Errorln("app_id:", a.ID)
 		return err
 	}
 
-	now := time.Now()
-	for _, referId := range refers {
-		appRefer := ApplicationReference{
-			Model: gorm.Model{
-				CreatedAt: now,
-				UpdatedAt: now,
-			},
-			AppID:     a.ID,
-			ReferID:   referId,
-			ReferKind: kind,
-		}
-		a.Refers = append(a.Refers, appRefer)
-	}
-
-	if !a.ReferEqual(&old) {
-		if err = UpdateAppRefers(a.ID, a.Refers); err != nil {
-			tagLog("app refer update").WithError(err).Errorf("app_id: %d, refers: %v\n", a.ID, a.Refers)
-			return err
-		}
-		if err = a.completeXstream(); err != nil {
-			tagLog("app xstream complete").WithError(err).Errorln("app_id:", a.ID)
-			return err
-		}
-		if err = a.completeResources(); err != nil {
-			tagLog("app resources complete").WithError(err).Errorln("app_id:", a.ID)
-			return err
-		}
-		_ = GetResourceRender().TryMergeUpstreamResources(a)
-		needPush = true
+	if err = tx.Commit().Error; err != nil {
+		return err
 	}
 
 	GetApplicationCache().ReBuild()
 
-	if needPush {
-		_ = GetEventNotifier().Push(EventApplicationUpdate, a)
-	}
-
-	return err
+	return GetEventNotifier().Push(EventApplicationUpdate, a)
 }
 
-func (a *Application) ReferEqual(other *Application) bool {
-	var (
-		r, l []string
-	)
-
-	for _, refer := range a.Refers {
-		r = append(r, refer.String())
-	}
-
-	for _, refer := range other.Refers {
-		l = append(l, refer.String())
-	}
-
-	return strings.Join(r, ",") == strings.Join(l, ",")
-}
-
-func GetApplicationById(id uint) (Application, error) {
+func GetApplicationByID(id uint) (Application, error) {
 	var err error
 
 	app := Application{Model: gorm.Model{ID: id}}
@@ -446,9 +611,22 @@ func GetApplicationById(id uint) (Application, error) {
 		return app, err
 	}
 
-	err = app.completeXstream()
+	err = app.loadApplicationXstream()
 
 	return app, err
+}
+
+func GetSingleAppByName(name string, cluster string) (Application, error) {
+	app := Application{}
+	err := GetDBInstance().Preload("Resources").Where("app_name=? and odin_cluster=?", name, cluster).Find(&app).Error
+
+	return app, err
+}
+func (app *Application) GetApplicationByAppNameAndCluster() (err error) {
+
+	err = GetDBInstance().Where("app_name = ? and odin_cluster = ?", app.AppName, app.OdinCluster).First(&app).Error
+
+	return
 }
 
 func AllApps(onlyValid bool) ([]Application, error) {
@@ -467,6 +645,28 @@ func AllApps(onlyValid bool) ([]Application, error) {
 	return result, err
 }
 
+func QueryApplications(page, size int) ([]Application, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if size <= 0 {
+		size = 10
+	}
+
+	apps := make([]Application, 0)
+
+	count := 0
+	db := GetDBInstance().Preload("Resources")
+	err := db.Model(&Application{}).Count(&count).Error
+	if err != nil {
+		return apps, err
+	}
+
+	err = db.Offset((page - 1) * size).Limit(size).Find(&apps).Error
+
+	return apps, err
+}
+
 func CompleteActiveApps() (map[string]*Application, error) {
 	var (
 		err        error
@@ -480,7 +680,7 @@ func CompleteActiveApps() (map[string]*Application, error) {
 
 	for _, app := range appList {
 		app := app
-		if e := app.completeXstream(); e != nil {
+		if e := app.loadApplicationXstream(); e != nil {
 			err = e
 		}
 		activeApps[app.Hash()] = &app
@@ -489,34 +689,298 @@ func CompleteActiveApps() (map[string]*Application, error) {
 	return activeApps, err
 }
 
-func UpdateAppRefers(appId uint, refers []ApplicationReference) error {
-	var err error
+func (a *Application) repairApplicationRelations(tx *gorm.DB) error {
+	var (
+		err           error
+		increaseVRess = make(map[string][]cache.Resource)
+	)
 
-	db := GetDBInstance().Model(&ApplicationReference{})
-
-	if err = db.Unscoped().Where("app_id = ?", appId).Update("deleted_at", time.Now()).Error; err != nil {
+	old, err := GetApplicationByID(a.ID)
+	if err != nil {
 		return err
 	}
 
-	for _, refer := range refers {
-		refer := refer
+	if reflect.DeepEqual(old.UpstreamIDs, a.UpstreamIDs) && reflect.DeepEqual(old.Protocols, a.Protocols) {
+		return nil
+	}
 
-		row := ApplicationReference{}
-		if e := db.Unscoped().Where("app_id=?", appId).Where("refer_id=?", refer.ReferID).First(&row).Error; e != nil && e == gorm.ErrRecordNotFound {
-			if err = db.Create(&refer).Error; err != nil {
+	incrProtos, updateProtos := ApplicationProtocols{}, ApplicationProtocols{}
+	for _, proto := range a.Protocols {
+		if oldProto := old.Protocols.Pop(proto.Domain); oldProto == nil {
+			incrProtos = append(incrProtos, proto)
+		} else if oldProto.ProxyPort != proto.ProxyPort || oldProto.AppPort != proto.AppPort {
+			updateProtos = append(updateProtos, proto)
+		}
+	}
+	decrProtos := old.Protocols
+
+	if incrProtos.Len() > 0 {
+		a.Protocols.ResetOwnerRefer(nil) // 避免栈溢出
+		dummyApp := deepcopy.Copy(a).(*Application)
+		dummyApp.Protocols = incrProtos
+		if err = dummyApp.loadApplicationXstream(); err != nil {
+			return err
+		}
+		for idx, res := range old.Resources {
+			var yb, jb []byte
+			if yb, err = GetResourceRender().Render(res.ResType, dummyApp); err != nil {
 				return err
 			}
+			old.Resources[idx].YamlConfig += *(*string)(unsafe.Pointer(&yb))
+			if jb, err = yaml.YAMLToJSON([]byte(old.Resources[idx].YamlConfig)); err != nil {
+				return err
+			}
+			old.Resources[idx].Config = *(*string)(unsafe.Pointer(&jb))
+		}
+	}
+	// repair protos
+	decreaseIDs, increaseIDs := a.UpstreamIDs.Diff(&old.UpstreamIDs)
+	decreaseAppSet := make(map[string]struct{}, 0)
+
+	// repair xstream
+	for _, streamID := range decreaseIDs {
+		if streamID == 0 {
 			continue
 		}
-
-		if e := db.Unscoped().Where("app_id=?", appId).Where("refer_id=?", refer.ReferID).
-			Update(map[string]interface{}{
-				"refer_kind": refer.ReferKind,
-				"deleted_at": nil,
-			}).Error; e != nil {
-			return e
+		app := Application{}
+		if err = tx.First(&app, streamID).Error; err != nil {
+			return err
+		}
+		if app.DownstreamIDs.Remove(a.ID) {
+			if err = tx.Model(app).UpdateColumn("downstream_ids", app.DownstreamIDs).Error; err != nil {
+				return err
+			}
+		}
+		for _, proto := range app.Protocols {
+			decreaseAppSet[proto.Domain] = Zero
 		}
 	}
 
-	return nil
+	for _, streamID := range increaseIDs {
+		if streamID == 0 {
+			continue
+		}
+		app := Application{}
+		if err = tx.First(&app, streamID).Error; err != nil {
+			return err
+		}
+		if app.DownstreamIDs.Add(a.ID) {
+			if err = tx.Model(app).UpdateColumn("downstream_ids", app.DownstreamIDs).Error; err != nil {
+				return err
+			}
+		}
+	}
+	if len(increaseIDs) > 0 {
+		a.Protocols.ResetOwnerRefer(nil) // 避免栈溢出
+		dummyApp := deepcopy.Copy(a).(*Application)
+		dummyApp.UpstreamIDs = increaseIDs
+		if err = dummyApp.loadApplicationXstream(); err != nil {
+			return err
+		}
+		for _, resType := range [...]ResourceType{
+			ResourceTypeRoute,
+			ResourceTypeEndpoint,
+			ResourceTypeCluster,
+		} {
+			var yb, jb []byte
+			if yb, err = GetResourceRender().RenderDelta(resType, dummyApp); err != nil {
+				return err
+			}
+			if jb, err = yaml.YAMLToJSON(yb); err != nil {
+				return err
+			}
+			vrss, err := ValidationResource(resType, jb)
+			if err != nil {
+				return err
+			}
+			if resType == ResourceTypeRoute {
+				for _, vrs := range vrss {
+					router := vrs.(*v2.RouteConfiguration)
+					for range router.VirtualHosts {
+						// self at first one in template, remove it!
+						router.VirtualHosts = append(router.VirtualHosts[:0], router.VirtualHosts[1:]...)
+						break
+					}
+				}
+			}
+			increaseVRess[resType] = vrss
+		}
+	}
+
+outer:
+	for resIdx, res := range old.Resources {
+		crss, err := ValidationResource(res.ResType, *(*[]byte)(unsafe.Pointer(&res.Config)))
+		if err != nil {
+			return err
+		}
+		// merge
+		if res.ResType == ResourceTypeEndpoint || res.ResType == ResourceTypeCluster {
+			if vrs, ok := increaseVRess[res.ResType]; ok {
+				crss = append(crss, vrs...)
+			}
+		}
+
+		okCacheRess := crss[:0]
+	inner:
+		for _, crs := range crss {
+			switch res.ResType {
+			case ResourceTypeRoute:
+				router := crs.(*v2.RouteConfiguration)
+				// delete old protocols
+				for _, delProto := range decrProtos {
+					if router.Name == delProto.Domain {
+						continue inner
+					}
+				}
+				// merge new upstream
+				if vRess, ok := increaseVRess[res.ResType]; ok {
+					for _, vRes := range vRess {
+						vHosts := vRes.(*v2.RouteConfiguration)
+						if vHosts.Name == router.Name {
+							router.VirtualHosts = append(router.VirtualHosts, vHosts.VirtualHosts...)
+							break
+						}
+					}
+				}
+				// delete old
+				rv := router.VirtualHosts[:0]
+				for _, vHost := range router.VirtualHosts {
+					if _, ok := decreaseAppSet[vHost.Name]; !ok {
+						rv = append(rv, vHost)
+					}
+				}
+				router.VirtualHosts = rv
+			case ResourceTypeEndpoint:
+				endpoint := crs.(*v2.ClusterLoadAssignment)
+				if _, ok := decreaseAppSet[endpoint.ClusterName]; ok {
+					continue inner
+				}
+				// 更新端口
+				for _, updateProto := range updateProtos {
+					if endpoint.ClusterName == updateProto.Domain {
+						for i, ee := range endpoint.Endpoints {
+							if len(ee.LbEndpoints) == 0 {
+								break
+							}
+							eeHost, ok := ee.LbEndpoints[0].HostIdentifier.(*eev2.LbEndpoint_Endpoint)
+							if !ok {
+								break
+							}
+							eeAddr, ok := eeHost.Endpoint.Address.Address.(*envoy_api_v2_core.Address_SocketAddress)
+							if !ok {
+								break
+							}
+							eePort, ok := eeAddr.SocketAddress.PortSpecifier.(*envoy_api_v2_core.SocketAddress_PortValue)
+							if !ok {
+								break
+							}
+							eePort.PortValue = updateProto.AppPort
+							endpoint.Endpoints[i] = ee
+						}
+					}
+				}
+
+			case ResourceTypeCluster:
+				cluster := crs.(*v2.Cluster)
+				for _, delProto := range decrProtos {
+					if cluster.Name == delProto.Domain {
+						continue inner
+					}
+				}
+				if _, ok := decreaseAppSet[cluster.Name]; ok {
+					continue inner
+				}
+			case ResourceTypeListener:
+				listener := crs.(*v2.Listener)
+				for _, delProto := range decrProtos {
+					if listener.Name == delProto.Domain {
+						continue inner
+					}
+				}
+				// 更新端口
+				for _, updateProto := range updateProtos {
+					if listener.Name == updateProto.Domain {
+						listener.Address.GetSocketAddress().PortSpecifier.(*envoy_api_v2_core.SocketAddress_PortValue).PortValue = updateProto.ProxyPort
+					}
+				}
+			default:
+				continue outer
+			}
+			okCacheRess = append(okCacheRess, crs)
+		}
+
+		var jbs []string
+		marshaller := jsonpb.Marshaler{
+			OrigName: true,
+		}
+		buf := bytes.Buffer{}
+		for _, crs := range okCacheRess {
+			// FIXME: 当增加协议&&增加新的上游时，新上游会有重复的bug
+			// TODO: 增加去重逻辑
+			bw := bufio.NewWriter(&buf)
+			if err = marshaller.Marshal(bw, crs); err != nil {
+				return err
+			}
+			_ = bw.Flush()
+			jbs = append(jbs, buf.String())
+			buf.Reset()
+		}
+
+		hackArray := "[" + strings.Join(jbs, ",") + "]"
+		//yb, err := yaml.JSONToYAML(*(*[]byte)(unsafe.Pointer(&hackArray))) // FIXME: why?
+		yb, err := yaml.JSONToYAML([]byte(hackArray))
+		if err != nil {
+			return err
+		}
+		// FIXME: necessary?
+		jb, err := yaml.YAMLToJSON(yb)
+		if err != nil {
+			return err
+		}
+		old.Resources[resIdx].Config = *(*string)(unsafe.Pointer(&jb))
+		old.Resources[resIdx].YamlConfig = *(*string)(unsafe.Pointer(&yb))
+	}
+
+	a.Resources = old.Resources
+
+	return err
+}
+
+func ProtocolHash(resName string) string {
+	if strings.Count(resName, ".") == 3 {
+		return resName
+	}
+
+	seps := strings.Split(resName, ".")
+	if len(seps) == 5 {
+		seps = append(seps[:1], seps[2:]...)
+	} else {
+		logs.Logger.Errorln("invalid protocol hash:", resName)
+		return resName
+	}
+
+	return strings.Join(seps, ".")
+}
+
+func ResProtocol(resName string) string {
+	if strings.Count(resName, ".") == 3 {
+		return ProtocolHTTP
+	}
+
+	seps := strings.Split(resName, ".")
+	if len(seps) == 5 {
+		return seps[1]
+	}
+
+	return "unknown protocol"
+}
+
+func ApplicationTopology() ([]Application, error) {
+	var err error
+
+	apps := make([]Application, 0)
+	omits := []string{"version", "status", "user_id", "user_name", "description"}
+	err = GetDBInstance().Model(Application{}).Omit(omits...).Find(&apps).Error
+
+	return apps, err
 }

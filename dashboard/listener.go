@@ -95,7 +95,6 @@ func NewListenWithTryTime(address string, maxWait time.Duration) (net.Listener, 
 	if err != nil {
 		return nil, err
 	}
-
 	return &ListenerWrap{
 		listener:        ln,
 		stop:            make(chan struct{}),
@@ -104,12 +103,11 @@ func NewListenWithTryTime(address string, maxWait time.Duration) (net.Listener, 
 	}, nil
 }
 
-func NewListenWithContext(address string, ctx context.Context) (net.Listener, error) {
+func NewListenWithContext(ctx context.Context, address string) (net.Listener, error) {
 	ln, err := net.Listen("tcp4", address)
 	if err != nil {
 		return nil, err
 	}
-
 	return &ListenerWrap{
 		listener:        ln,
 		stop:            make(chan struct{}),

@@ -5,15 +5,22 @@
     {{ template "header" }}
 
     <style type="text/css">
-        #mynetwork {
-            width: 1100px;
-            height: 600px;
+        #jstio_network {
+            width: 100%;
+            height: calc(100vh - 180px);
             border: 1px solid lightgray;
         }
     </style>
 
     <script type="text/javascript" src="/static/assets/vis/dist/vis.min.js"></script>
     <link href="/static/assets/vis/dist/vis-network.min.css" rel="stylesheet" type="text/css"/>
+
+    <link href="/static/assets/bower_components/bootstrap-daterangepicker/daterangepicker.css" rel="stylesheet" type="text/css">
+    <link href="/static/assets/plugins/timepicker/bootstrap-timepicker.min.css" rel="stylesheet" type="text/css">
+
+    <script type="text/javascript" src="/static/assets/bower_components/moment/min/moment.min.js"></script>
+    <script type="text/javascript" src="/static/assets/bower_components/bootstrap-daterangepicker/daterangepicker.js"></script>
+    <script type="text/javascript" src="/static/assets/plugins/timepicker/bootstrap-timepicker.min.js"></script>
 
 </header>
 
@@ -28,12 +35,33 @@
             <ol class="breadcrumb">
                 <li><a href="/admin/view/index/"><i class="fa fa-dashboard"></i> Home</a></li>
             </ol>
+
+            <input id="star_time" type="hidden">
+            <input id="end_time" type="hidden">
+
+            <div class="mailbox-controls">
+                <div class="pull-left">
+                    <a class="btn btn-sm fa fa-area-chart" href="http://xdslog.north.shouji.sogou:5601/app/kibana#/discover"> Kibana.north</a>
+                    <a class="btn btn-sm fa fa-area-chart" href="http://xdslog.south.shouji.sogou:5601/app/kibana#/discover"> Kibana.south</a>
+                </div>
+
+                <div class="pull-right">
+                    <button type="button" class="btn btn-default" id="daterange-btn">
+                        <span>
+                          <i class="fa fa-calendar"></i> range
+                        </span>
+                        <i class="fa fa-caret-down"></i>
+                    </button>
+                    <button id="refresh-btn" type="button" class="btn btn-default btn-sm" onclick="onRefresh()"><i class="fa fa-refresh"></i></button>
+                </div>
+            </div>
+
         </section>
 
         <section class="content">
             <div class="row">
                 <div class="col-xs-12">
-                    <div id="mynetwork"></div>
+                    <div id="jstio_network"></div>
                 </div>
             </div>
         </section>
@@ -46,47 +74,58 @@
 </body>
 
 <script>
-    function draw() {
-        // create some nodes
-        var nodes = [
-            {id: 0, "label": "Myriel", "group": 1},
-            {id: 1, "label": "Napoleon", "group": 1},
-            {id: 2, "label": "Mlle.Baptistine", "group": 1},
-            {id: 3, "label": "Mme.Magloire", "group": 1},
-            {id: 4, "label": "CountessdeLo", "group": 1},
-            {id: 5, "label": "Geborand", "group": 1},
-            {id: 6, "label": "Champtercier", "group": 1},
-            {id: 7, "label": "Cravatte", "group": 1},
-            {id: 8, "label": "Count", "group": 1},
-            {id: 9, "label": "OldMan", "group": 1},
-            {id: "hello", "label": "Labarre", "group": 2},
-        ];
 
-        // create some edges
-        var edges = [
-            {"from": 1, "to": 0},
-            {"from": 2, "to": 0},
-            {"from": 3, "to": 0},
-            {"from": 3, "to": 2},
-            {"from": 4, "to": 0},
-            {"from": 5, "to": 0},
-            {"from": 6, "to": 0},
-            {"from": 7, "to": 0},
-            {"from": 8, "to": 0},
-            {"from": 9, "to": 0},
-        ];
+    //var rison = require("rison");
 
+    function draw(nodes, edges) {
         // create a network
-        var container = document.getElementById('mynetwork');
+        var container = document.getElementById('jstio_network');
+        for(i=0; i<nodes.length; i++) {
+            delete nodes[i].group;
+
+            var error_total = nodes[i]["stats"]["_total"];
+            if(error_total === 0) {
+                nodes[i].color = 'green';
+            }else if(error_total <= 10) {
+                nodes[i].color = 'yellow';
+                nodes[i].size = 18;
+            } else {
+                nodes[i].color = 'red';
+                nodes[i].font = {
+                    color: 'red',
+                    size: 16
+                };
+                nodes[i].size = 20;
+            }
+        }
+        var visNodes = new vis.DataSet(nodes);
+        var visEdges = new vis.DataSet(edges);
+        //visNodes.update(nodes);
         var data = {
-            nodes: nodes,
-            edges: edges
+            nodes: visNodes,
+            edges: visEdges
         };
         var options = {
+            autoResize: true,
             nodes: {
                 shape: 'dot',
                 size: 16
             },
+            edges: {
+                color: {
+                    inherit: false,
+                    opacity: 1.0
+                }
+            },
+            layout: {
+                randomSeed: 50
+                // //improvedLayout: true,
+                // hierarchical: {
+                //     direction: "UD",
+                // }
+            },
+            //clickToUse: true,
+            /*
             physics: {
                 forceAtlas2Based: {
                     gravitationalConstant: -26,
@@ -94,22 +133,111 @@
                     springLength: 230,
                     springConstant: 0.18
                 },
-                maxVelocity: 146,
+                maxVelocity: 3,
                 solver: 'forceAtlas2Based',
-                timestep: 0.35,
-                stabilization: {iterations: 150}
+                timestep: 0.05,
+                stabilization: {
+                    enabled: true,
+                    iterations: 50,
+                    updateInterval: 25
+                }
             }
+            */
         };
+
         var network = new vis.Network(container, data, options);
+        network.on("click", function (params) {
+            var nodesID = params['nodes']['0'];
+            if(nodesID) {
+                var clickedNode = visNodes.get(nodesID);
+                clickedNode.strokeWidth = 1;
+                clickedNode.title = `<pre><b>` + JSON.stringify(clickedNode["stats"], null, "  ") + `</b></pre>`;
+                visNodes.update(clickedNode);
+            }
+        });
 
+        network.on("doubleClick", function (params) {
+            var nodesID = params['nodes']['0'];
+            if(nodesID) {
+                var node = visNodes.get(nodesID);
+                window.location.href = buildKibanaClickURL(node.domain);
+            }
+        })
     }
-</script>
 
-<script>
+    function buildKibanaClickURL(domain) {
+
+        let north_url = "http://xdslog.north.shouji.sogou:5601/app/kibana#/discover?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:now-5m,to:now))&_a=(columns:!(_source)," +
+            "filters:!(('$state':(store:appState),meta:(alias:!n,disabled:!f,index:'81ad5b70-2d5a-11ea-9358-8336f4938dff',key:domain,negate:!f,params:(query:" +
+            domain +
+            "),type:phrase),query:(match:(domain:(query:" +
+            domain +
+            ",type:phrase))))),index:'81ad5b70-2d5a-11ea-9358-8336f4938dff',interval:auto,query:(language:kuery,query:''),sort:!(!(star_time,desc)))";
+
+        // let south_url = "http://xdslog.south.shouji.sogou:5601/app/kibana#/discover?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:now-5m,to:now))&_a=(columns:!(_source)," +
+        //     "filters:!(('$state':(store:appState),meta:(alias:!n,disabled:!f,index:ef1c2d90-31be-11ea-beb0-b9f0934bb161,key:domain,negate:!f,params:(query:" +
+        //     domain +
+        //     "),type:phrase),query:(match:(domain:(query:" +
+        //     domain +
+        //     ",type:phrase))))),index:'ef1c2d90-31be-11ea-beb0-b9f0934bb161',interval:auto,query:(language:kuery,query:''),sort:!(!(star_time,desc)))";
+        // return domain.indexOf("saturn") > 0 ? south_url : north_url;
+
+        return north_url;
+    }
+
+    function onRefresh() {
+        let star_time = $("#star_time").val();
+        let end_time = $("#end_time").val();
+        let url = "/admin/topology?from="+star_time+"&to="+end_time;
+        $.ajax({
+            async: false,
+            url: url,
+            dataType: "json",
+            success: function (result) {
+                draw(result["nodes"], result["edges"]);
+            }
+        });
+    }
+
     $(document).ready(function () {
         $.getScript("/static/assets/dist/js/demo.js");
 
-        draw();
+        $.ajax({
+            async: false,
+            url: "/admin/topology",
+            dataType: "json",
+            success: function (result) {
+                draw(result["nodes"], result["edges"]);
+            }
+        });
+
+        $("#daterange-btn").daterangepicker({
+            timePicker: true,
+            autoUpdateInput: true,
+            showCustomRangeLabel: false,
+            ranges: {
+                "5m": [moment().subtract(5, "minutes"), moment()],
+                "10m": [moment().subtract(10, "minutes"), moment()],
+                "15m": [moment().subtract(15, "minutes"), moment()],
+                "20m": [moment().subtract(20, "minutes"), moment()],
+                "30m": [moment().subtract(30, "minutes"), moment()],
+                "45m": [moment().subtract(45, "minutes"), moment()],
+                "1hour": [moment().subtract(1, "hours"), moment()],
+                "2hour": [moment().subtract(2, "hours"), moment()],
+                "3hour": [moment().subtract(3, "hours"), moment()],
+                "6hour": [moment().subtract(6, "hours"), moment()],
+                "12hour": [moment().subtract(12, "hours"), moment()],
+            },
+            startDate: moment().subtract(5, "minutes"),
+            endDate: moment()
+        },
+            function (star, end) {
+                let datetime_format = "YYYY-MM-DD hh:mm:ss";
+                $("#daterange-btn span").html(star.format(datetime_format) + ' - ' + end.format(datetime_format))
+                $("#star_time").val(star.format(datetime_format));
+                $("#end_time").val(end.format(datetime_format));
+            }
+        );
     });
 </script>
 

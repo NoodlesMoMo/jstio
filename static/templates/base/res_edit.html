@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/static/assets/codemirror/lib/codemirror.css">
     <link rel="stylesheet" href="/static/assets/codemirror/theme/monokai.css">
     <link rel="stylesheet" href="/static/assets/codemirror/addon/display/fullscreen.css">
+    <link rel="stylesheet" href="/static/assets/codemirror/addon/fold/foldgutter.css">
 
     <script src="/static/assets/codemirror/lib/codemirror.js"></script>
     <script src="/static/assets/codemirror/mode/javascript/javascript.js"></script>
@@ -14,9 +15,12 @@
     <script src="/static/assets/codemirror/mode/javascript/javascript.js"></script>
     <script src="/static/assets/codemirror/addon/edit/matchbrackets.js"></script>
     <script src="/static/assets/codemirror/addon/selection/active-line.js"></script>
+    <script src="/static/assets/codemirror/addon/fold/foldcode.js"></script>
+    <script src="/static/assets/codemirror/addon/fold/foldgutter.js"></script>
+    <script src="/static/assets/codemirror/addon/fold/indent-fold.js"></script>
     <script src="/static/assets/codemirror/addon/display/fullscreen.js"></script>
+    <script src="/static/assets/codemirror/addon/display/rulers.js"></script>
 
-    <script src="/static/assets/esprima/dist/esprima.js"></script>
     <script src="/static/assets/js-yaml/lib/demo.js"></script>
     <script src="/static/assets/js-base64/base64.min.js"></script>
 
@@ -45,7 +49,6 @@
                             <h3 class="box-title">资源</h3>
                         </div>
 
-
                         <form id="edit_resource" class="form-horizontal" action="/admin/data/res_update/" method="post" enctype="application/x-www-form-urlencoded" onsubmit="return onUpdateResourceResponse();">
                             <div class="box-body">
 
@@ -53,7 +56,7 @@
                                 <input type="hidden" name="app_id" value="{{.AppID}}">
 
                                 <div class="form-group">
-                                    <label for="name" class="col-sm-2">资源名称</label>
+                                    <label for="name" class="col-sm-2 ml-1">资源名称</label>
                                     <div class="col-sm-10">
                                         <input class="form-control" type="text" name="name" value="{{.Name}}">
                                     </div>
@@ -68,7 +71,7 @@
 
                                 <div class="form-group">
                                     <label for="resource" class="col-sm-2">资源配置</label>
-                                    <div class="col-sm-10">
+                                    <div class="col-sm-10" style="height: calc(100vh - 350px); min-height: 300px">
                                         <textarea id="yaml_editor">{{.YamlConfig}}</textarea>
                                     </div>
                                 </div>
@@ -76,16 +79,10 @@
                                 <input type="hidden" name="json_config" id="res_real">
                                 <input type="hidden" name="yaml_config" id="res_yaml">
 
-                                <div class="form-group">
-                                    <div class="col-sm-4">
-                                        <button type="button" class="btn btn-primary btn-sm" onclick="onValidation()">校验</button>
-                                    </div>
-                                    <div class="col-sm-8"></div>
-                                </div>
-
-
                                 <div class="box-footer">
-                                    <button type="submit" class="btn btn-success pull-right">确定</button>
+                                    <button type="button" class="btn btn-primary btn-sm" onclick="onValidation()">校验</button>
+                                    <button id="fullscreen_btn" type="button" class="btn btn-primary btn-sm">编辑模式</button>
+                                    <button type="submit" class="btn btn-success pull-right" onclick="on_submit()">确定</button>
                                 </div>
 
                             </div>
@@ -102,24 +99,47 @@
 </body>
 
 <script>
-
+    var colors = ["#fcc", "#f5f577", "#cfc", "#aff", "#ccf", "#fcf"];
+    var rulers = [];
+    for (var i = 0; i <= 4; i++) {
+        rulers.push({color: colors[i], column: i+2, lineStyle: "dashed"});
+    }
     var resource_editor = CodeMirror.fromTextArea(document.getElementById("yaml_editor"),
         {
+            //rulers: rulers,
             lineNumbers: true,
-            indentUnit: 4,
+            indentUnit: 2,
             styleActiveLine: true,
             matchBrackets: true,
             lineWrapping: true,
             mode: 'yaml',
             theme: 'monokai',
+            extraKeys: {
+                "Ctrl-L": function (cm) {
+                    cm.foldCode(cm.getCursor());
+                }
+            },
+            foldGutter: true,
+            gutters: ["CodeMirror-linenumbers", "CodeMirror-foldgutter"],
         });
 
     resource_editor.on("blur", function () {
         let content = resource_editor.getValue();
         let doc = jsyaml.load(content);
+        console.log(doc);
         $("#res_real").attr({"value": Base64.encode(JSON.stringify(doc))});
         $("#res_yaml").attr({"value": Base64.encode(content)});
     });
+
+    function on_submit() {
+        let content = resource_editor.getValue();
+        let doc = jsyaml.load(content);
+        console.log(doc);
+        $("#res_real").attr({"value": Base64.encode(JSON.stringify(doc))});
+        $("#res_yaml").attr({"value": Base64.encode(content)});
+
+        return true;
+    }
 
     function onValidation() {
         try{
@@ -134,11 +154,12 @@
                 contentType: "application/json;charset=utf-8",
                 data: data,
                 success: function (result) {
-                    let response = JSON.parse(result);
+                    //let response = JSON.parse(result);
+                    let response = result;
                     if(response["code"] === 0){
                         toastr.success("校验成功");
                     } else {
-                        toastr.error("失败", response["msg"]);
+                        toastr.error(response["msg"]);
                     }
                 },
                 error: function(msg) {
@@ -152,7 +173,8 @@
 
     function onUpdateResourceResponse() {
         $("#edit_resource").ajaxSubmit(function(message){
-            let response = JSON.parse(message);
+            //let response = JSON.parse(message);
+            let response = message;
             if(response["code"] === 0){
                 toastr.success("成功");
             }else{
@@ -167,6 +189,17 @@
 
     $(document).ready(function () {
         $.getScript("/static/assets/dist/js/demo.js");
+        resource_editor.setSize("100%", "100%");
+        $("#fullscreen_btn").click(function (event) {
+            let notFull = resource_editor.getOption("fullScreen");
+            resource_editor.setOption("fullScreen", !notFull);
+
+            if(!notFull) {
+                $(".main-sidebar").hide();
+            } else {
+                $(".main-sidebar").show();
+            }
+        });
     });
 </script>
 

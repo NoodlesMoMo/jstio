@@ -1,9 +1,9 @@
 package service
 
 import (
+	"git.sogou-inc.com/iweb/jstio/internel"
+	. "git.sogou-inc.com/iweb/jstio/internel/logs"
 	"html/template"
-	"jstio/internel"
-	. "jstio/internel/logs"
 	"os"
 	"path"
 	"path/filepath"
@@ -21,15 +21,15 @@ var (
 	templates_ map[string]*template.Template
 )
 
-func init() {
-	TemplateReload()
+func LoadDashboardTemplates() {
+	templateReload()
 
-	if internel.GetAfxMeta().DebugMode {
-		go TemplateAutoReload()
+	if internel.GetAfxOption().DebugMode {
+		go templateAutoReload()
 	}
 }
 
-func TemplateReload() {
+func templateReload() {
 	if templates_ == nil {
 		templates_ = make(map[string]*template.Template)
 	}
@@ -65,7 +65,7 @@ func TemplateReload() {
 	}
 }
 
-func TemplateAutoReload() {
+func templateAutoReload() {
 	logger := Logger
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -90,7 +90,7 @@ func TemplateAutoReload() {
 
 				if (event.Op&fsnotify.Rename == fsnotify.Rename) && (event.Op&fsnotify.Chmod == fsnotify.Chmod) {
 					logger.WithField(`template`, `event`).Println("template will reload")
-					TemplateReload()
+					templateReload()
 				}
 
 			case err, ok := <-watcher.Errors:

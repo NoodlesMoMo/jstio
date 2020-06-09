@@ -1,25 +1,28 @@
-name: {{ .Hash }}
-virtual_hosts:
-  - domains:
-      - {{ .Hash }}
-    include_request_attempt_count: true
-    name: {{ .Hash }}
-    retry_policy:
-      num_retries: 3
-      per_try_timeout: 2s
-      retry_on: reset,connect-failure,refused-stream,gateway-error
-      retry_host_predicate:
-        - name: envoy.retry_host_predicates.previous_hosts
-      host_selection_retry_max_attempts: 3
-      retry_priority:
-        name: envoy.retry_priorities.previous_priorities
-        config:
-          update_frequency: 2
-    routes:
-      - match:
-          prefix: /
-        route:
-          cluster: {{ .Hash }}
-{{ range $app := .Upstream }}
-  {{ template "route" $app }}
-{{ end }}
+{{- range $selfProtocol := .Protocols }}
+- name: {{ $selfProtocol.Domain }}
+  virtual_hosts:
+    - domains:
+      - {{ $selfProtocol.Domain }}
+      name: {{ $selfProtocol.Domain }}
+      routes:
+        - match:
+            prefix: /
+          route:
+            timeout: 2s
+            cluster: {{ $selfProtocol.Domain }}
+  {{- range $upstream := $.Upstream }}
+    {{- range $upstreamProtocol := $upstream.Protocols }}
+      {{- if eq $upstreamProtocol.Protocol $selfProtocol.Protocol }}
+    - domains:
+      - {{ $upstreamProtocol.Domain }}
+      name: {{ $upstreamProtocol.Domain  }}
+      routes:
+        - match:
+            prefix: /
+          route:
+            timeout: 2s
+            cluster: {{ $upstreamProtocol.Domain }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}

@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"jstio/dashboard/service"
+	"git.sogou-inc.com/iweb/jstio/dashboard/service"
 
 	"github.com/qiangxue/fasthttp-routing"
 )
@@ -11,8 +11,8 @@ var (
 )
 
 func AdminHandler(ctx *routing.Context) error {
-	action := string(ctx.Param("action"))
-	res := string(ctx.Param("res"))
+	action := ctx.Param("action")
+	res := ctx.Param("res")
 	if handler, ok := (*adminSrv)[action]; ok {
 		return handler(ctx, res)
 	}

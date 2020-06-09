@@ -6,21 +6,17 @@ import (
 	"errors"
 	v2 "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	"github.com/envoyproxy/go-control-plane/pkg/cache"
-	"github.com/gogo/protobuf/jsonpb"
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/jsonpb"
+	"github.com/golang/protobuf/proto"
 )
 
 var (
-	ErrValidateType             = errors.New("resource validate: unknown type")
-	ErrValidateEndpointName     = errors.New("resource validate: empty endpoint name")
-	ErrValidateEndpointNullLLBE = errors.New("resource validate: empty endpoint")
+	ErrValidateType = errors.New("resource validate: unknown type")
 )
 
 type validateResource interface {
 	proto.Message
-
 	Validate() error
-	Equal(interface{}) bool
 }
 
 func resourceMakerFactory(resType ResourceType) func() validateResource {
@@ -47,67 +43,48 @@ func resourceMakerFactory(resType ResourceType) func() validateResource {
 }
 
 func ValidationResource(resType ResourceType, content []byte) ([]cache.Resource, error) {
-	var (
-		err error
-	)
+	var err error
 
-	isArray := false
 	rcMaker := resourceMakerFactory(resType)
 
-	switch resType {
-	case ResourceTypeEndpoint, ResourceTypeCluster:
-		isArray = true
-	}
-
-	if isArray {
-		var clusters []map[string]interface{}
-		if err = json.Unmarshal(content, &clusters); err != nil {
-			return nil, err
-		}
-
-		var ress []cache.Resource
-		for _, cluster := range clusters {
-			b, _ := json.Marshal(cluster)
-			rc := rcMaker()
-			if err = jsonpb.Unmarshal(bytes.NewReader(b), rc); err != nil {
-				return nil, err
-			}
-			ress = append(ress, rc)
-			if e := rc.Validate(); e != nil {
-				return nil, e
-			}
-		}
-		return ress, nil
-	}
-
-	res := rcMaker()
-
-	if err = jsonpb.Unmarshal(bytes.NewReader(content), res); err != nil {
+	var materials []map[string]interface{}
+	if err = json.Unmarshal(content, &materials); err != nil {
 		return nil, err
 	}
 
-	return []cache.Resource{res}, res.Validate()
+	var cacheRess []cache.Resource
+	for _, material := range materials {
+		b, _ := json.Marshal(material)
+		rc := rcMaker()
+		if err = jsonpb.Unmarshal(bytes.NewReader(b), rc); err != nil {
+			return nil, err
+		}
+		if err = rc.Validate(); err != nil {
+			return nil, err
+		}
+		cacheRess = append(cacheRess, rc)
+	}
+	return cacheRess, nil
 }
 
-func StrictEndpointValidation(ress []cache.Resource) error {
-	if ress == nil {
-		return errors.New("invalid param")
+func ValidationResourceV2(resType ResourceType, content []byte) ([]cache.Resource, error) {
+	var err error
+
+	rcMaker := resourceMakerFactory(resType)
+
+	jsonDecoder := json.NewDecoder(bytes.NewReader(content))
+	_, err = jsonDecoder.Token()
+
+	var cacheRess []cache.Resource
+	for jsonDecoder.More() {
+		rc := rcMaker()
+		if err = jsonpb.UnmarshalNext(jsonDecoder, rc); err != nil {
+			return nil, err
+		}
+		if err = rc.Validate(); err != nil {
+			return nil, err
+		}
+		cacheRess = append(cacheRess, rc)
 	}
-
-	for _, res := range ress {
-		cla, ok := res.(*v2.ClusterLoadAssignment)
-		if !ok {
-			return ErrValidateType
-		}
-
-		if cla.ClusterName == "" {
-			return ErrValidateEndpointName
-		}
-
-		if len(cla.Endpoints) == 0 || len(cla.Endpoints[0].LbEndpoints) == 0 {
-			return ErrValidateEndpointNullLLBE
-		}
-	}
-
-	return nil
+	return cacheRess, nil
 }

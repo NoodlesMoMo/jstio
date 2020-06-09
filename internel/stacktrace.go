@@ -1,7 +1,7 @@
 package internel
 
 import (
-	"jstio/internel/logs"
+	"git.sogou-inc.com/iweb/jstio/internel/logs"
 	"runtime/debug"
 )
 

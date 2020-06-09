@@ -1,7 +1,7 @@
 package model
 
 type UserData struct {
-	UserId   string
+	UserID   string
 	UserName string
 	Email    string
 	Token    string

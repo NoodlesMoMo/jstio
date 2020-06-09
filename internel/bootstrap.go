@@ -1,143 +1,86 @@
 package internel
 
 import (
-	"encoding/json"
-	"fmt"
-	"github.com/valyala/fasthttp"
+	"errors"
 	"io/ioutil"
-	"jstio/internel/logs"
-	"jstio/internel/util"
-	"os"
-	"path"
-	"time"
 
 	"gopkg.in/yaml.v2"
 )
 
 var (
-	afxMeta *AfxMetaData
+	_afxOption *RegionOptions
 )
 
-func init() {
-	afxMeta = mustNewAfxMeta()
-}
+const (
+	NorthRegion RegionType = `north`
+	SouthRegion RegionType = `south`
+	LocalRegion RegionType = `develop`
+)
 
-type DBConn struct {
-	Addr     string `yaml:"addr"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	DB       string `yaml:"db"`
-}
+type RegionType = string
 
-type NSQConn struct {
-	Host         string `yaml:"host"`
-	NSQDPort     int    `yaml:"nsqd_tcp_port"`
-	NSQDHTTPPort int    `yaml:"nsqd_http_port"`
-}
-
-type NSQNode struct {
-	BroadcastAddress string `json:"broadcast_address"`
-	TCPPort          int    `json:"tcp_port"`
-	HTTPPort         int    `json:"http_port"`
-}
-
-type NSQCluster struct {
-	LookupAddress string `yaml:"nsqlookupd_addr"`
-	Nodes         []NSQNode
-}
-
-type AfxMetaData struct {
-	ClusterName      string `yaml:"cluster_name"`
-	AccessLog        string `yaml:"access_log"`
-	XdsManagerListen string `yaml:"xds_manager_listen"`
-	DashboardListen  string `yaml:"dashboard_listen"`
-	PushMode         string `yaml:"push_mode"`
-
+type RegionOptions struct {
 	DebugMode bool `yaml:"debug_mode"`
 
-	ETCDEndpoints []string `yaml:"etcd_endpoints"`
+	XdsManagerName   string `yaml:"xds_manager_name"`
+	XdsManagerListen string `yaml:"xds_manager_listen"`
 
-	MySQLConn DBConn `yaml:"mysql_conn"`
+	DashboardListen string `yaml:"dashboard_listen"`
 
-	NSQCluster NSQCluster `yaml:"nsq_cluster"`
+	Metrics struct {
+		Listen string `yaml:"listen"`
+		URI    string `yaml:"uri"`
+	}
 
-	Node string
+	StatsBackend string `yaml:"stats_backend"`
+
+	LogPath string `yaml:"log_path"`
+
+	ETCDConfig struct {
+		Addresses  []string `yaml:"addresses"`
+		PrefixKeys []string `yaml:"prefix_keys"`
+	} `yaml:"etcd"`
+
+	NSQTopic          string `yaml:"nsq_topic"`
+	NSQLookupdAddress string `yaml:"nsqlookupd"`
+
+	MySQLConn struct {
+		Addr     string `yaml:"addr"`
+		User     string `yaml:"user"`
+		Password string `yaml:"password"`
+		DB       string `yaml:"db"`
+	} `yaml:"mysql_conn"`
 }
 
-func (amd *AfxMetaData) String() string {
-	return amd.ClusterName
+func (r RegionOptions) GetETCDPrefixKeys() []string {
+	return r.ETCDConfig.PrefixKeys
 }
 
-func (amd *AfxMetaData) loadMetaData() error {
+func (r RegionOptions) GetETCDEndpoints() []string {
+	return r.ETCDConfig.Addresses
+}
 
-	pwd, _ := os.Getwd()
-	absPathName := path.Join(pwd, "conf/jstio.conf")
+type AfxOptions map[RegionType]RegionOptions
 
-	content, err := ioutil.ReadFile(absPathName)
+func MustLoadRegionOptions(cfgName string, region RegionType) (*RegionOptions, error) {
+	options := AfxOptions{}
+	content, err := ioutil.ReadFile(cfgName)
 	if err != nil {
-		return err
+		panic(err)
 	}
-
-	return yaml.Unmarshal(content, amd)
-}
-
-func (amd *AfxMetaData) fetchNSQDEndpoints() error {
-	tagLog := logs.FuncTaggedLoggerFactory()
-
-	amd.NSQCluster.Nodes = make([]NSQNode, 0)
-
-	code, resp, err := fasthttp.GetTimeout(nil, amd.NSQCluster.LookupAddress+"/nodes", 3*time.Second)
+	err = yaml.Unmarshal(content, &options)
 	if err != nil {
-		tagLog("response").Errorln(err)
-		return err
+		panic(err)
 	}
 
-	if code != fasthttp.StatusOK {
-		tagLog("response").Errorln("code:", code)
+	option, ok := options[region]
+	if !ok {
+		panic(errors.New("unknown region"))
 	}
-
-	producers := make(map[string][]NSQNode)
-
-	if err = json.Unmarshal(resp, &producers); err != nil {
-		tagLog("unmarshal").Errorln(err)
-	}
-
-	amd.NSQCluster.Nodes = producers["producers"]
-	if amd.NSQCluster.Nodes == nil && len(amd.NSQCluster.Nodes) == 0 {
-		tagLog("endpoints").Errorln("no usable endpoint")
-	}
-
-	return nil
+	_afxOption = &option
+	return &option, nil
 }
 
-func (amd *AfxMetaData) NSQDEndpoints() (tcpAddr, httpAddr []string) {
-	for _, nsq := range amd.NSQCluster.Nodes {
-		tcpAddr = append(tcpAddr, fmt.Sprintf("%s:%d", nsq.BroadcastAddress, nsq.TCPPort))
-		httpAddr = append(httpAddr, fmt.Sprintf("%s:%d", nsq.BroadcastAddress, nsq.HTTPPort))
-	}
-	return
-}
-
-func mustNewAfxMeta() *AfxMetaData {
-	meta := &AfxMetaData{}
-	if err := meta.loadMetaData(); err != nil {
-		logs.Logger.WithField(`bootstrap`, `load meta data`).Panic(err)
-	}
-
-	hostName, _ := os.Hostname()
-	meta.Node = hostName + ":" + util.GetLocalIPV4Addr()
-
-	_ = meta.fetchNSQDEndpoints()
-
-	runMode := `product`
-	if meta.DebugMode {
-		runMode = `debug`
-	}
-	logs.Logger.WithField(`bootstrap`, `run mode`).Println(runMode)
-
-	return meta
-}
-
-func GetAfxMeta() *AfxMetaData {
-	return afxMeta
+func GetAfxOption() *RegionOptions {
+	return _afxOption
 }

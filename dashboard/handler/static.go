@@ -1,10 +1,10 @@
 package handler
 
 import (
+	"git.sogou-inc.com/iweb/jstio/dashboard/service"
+	"git.sogou-inc.com/iweb/jstio/internel"
 	"github.com/qiangxue/fasthttp-routing"
 	"github.com/valyala/fasthttp"
-	"jstio/dashboard/service"
-	"jstio/internel"
 )
 
 var (
@@ -12,7 +12,7 @@ var (
 )
 
 func StaticHandler(ctx *routing.Context) error {
-	if internel.GetAfxMeta().DebugMode {
+	if internel.GetAfxOption().DebugMode {
 		ctx.Response.Header.Set("Cache-Control", "no-cache")
 	}
 

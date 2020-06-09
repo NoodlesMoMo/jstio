@@ -3,6 +3,10 @@
 <html>
     <header>
         {{ template "header" }}
+
+        <link rel="stylesheet" type="text/css" href="/static/assets/bower_components/datatables.net-bs/css/dataTables.bootstrap.min.css">
+        <script src="/static/assets/bower_components/datatables.net/js/jquery.dataTables.min.js"></script>
+        <script src="/static/assets/bower_components/datatables.net-bs/js/dataTables.bootstrap.min.js"></script>
     </header>
 
     <body class="hold-transition skin-blue sidebar-mini">
@@ -37,22 +41,30 @@
                                     </div>
                                     <!-- /.btn-group -->
                                     <button type="button" class="btn btn-default btn-sm"><i class="fa fa-refresh"></i></button>
-                                    <div class="pull-right">
-                                        <div class="btn-group">
-                                            <button type="button" class="btn btn-default btn-sm"><i class="fa fa-chevron-left"></i></button>
-                                            <button type="button" class="btn btn-default btn-sm"><i class="fa fa-chevron-right"></i></button>
+                                    <div class="btn-group">
+                                        <button type="button" class="btn btn-default btn-sm"><i class="fa fa-filter"></i></button>
+                                        <div class="dropdown" style="display: inline">
+                                            <button type="button" class="btn btn-default dropdown-toggle btn-sm" data-toggle="dropdown" aria-expanded="false">
+                                                <span class="caret"></span>
+                                            </button>
+                                            <ul class="dropdown-menu" role="menu" id="filter_cluster">
+                                                <li><a href="#">venus</a></li>
+                                                <li><a href="#">saturn</a></li>
+                                                <li><a href="#">test</a></li>
+                                            </ul>
                                         </div>
-                                        <!-- /.btn-group -->
+                                    </div>
+                                    <div class="pull-right">
                                     </div>
                                     <!-- /.pull-right -->
                                 </div>
 
                                 <!-- /.box-header -->
                                 <div class="box-body">
-                                    <table id="apps" class="table table-bordered table-hover text-center">
+                                    <table id="apps" class="table table-bordered table-hover text-center dataTable">
                                         <thead>
-                                        <tr>
-                                            <th>ID</th>
+                                        <tr role="row">
+                                            <th class="sorting">ID</th>
                                             <th>名称</th>
                                             <th>Odin集群</th>
                                             <th>Domain</th>
@@ -60,8 +72,8 @@
                                             <th>Namespace</th>
                                             <th>运行环境</th>
                                             -->
-                                            <th>状态</th>
-                                            <th>创建者</th>
+                                            <!-- <th>状态</th> -->
+                                            <!-- <th>创建者</th> -->
                                             <th>上游</th>
                                             <th>下游</th>
                                             <th>资源</th>
@@ -79,9 +91,8 @@
                                                 <td> {{ $hash }}</td>
                                                 <!--
                                                 <td>{{ $app.Namespace }}</td>
-                                                <td>{{ $app.Environment}}</td>
                                                 -->
-
+                                                <!--
                                                 <td>
                                                     {{ if eq $app.Status "pending" }}
                                                         <span class="label label-warning"> {{$app.Status}} </span>
@@ -93,8 +104,9 @@
                                                         <span class="label label-danger"> {{$app.Status}} </span>
                                                     {{ end }}
                                                 </td>
+                                                -->
 
-                                                <td>{{ $app.UserName }}</td>
+                                                <!-- <td>{{ $app.UserName }}</td> -->
 
                                                 <td>
                                                     {{ range $stream := $app.Upstream }}
@@ -119,7 +131,7 @@
                                                         <div class="btn-group">
                                                             <a href="/"><i class="fa fa-info-circle"></i></a>
                                                             <a href="/admin/view/html_app_update/{{$app.ID}}"><i class="fa fa-edit"></i></a>
-                                                            <a href="/admin/view/html_res_add/{{$app.ID}}"><i class="fa fa-cogs"></i></a>
+                                                            <!-- <a href="/admin/view/html_res_add/{{$app.ID}}"><i class="fa fa-cogs"></i></a> -->
                                                             <a href="/"><i class="fa fa-trash-o"></i></a>
                                                         </div>
                                                     </div>
@@ -147,8 +159,45 @@
     </body>
 
     <script>
+        // var page = 1;
+        //
+        // function previous_page() {
+        //     window.location.replace("/admin/view/html_app_list/?page=" + page);
+        //     console.log(page);
+        // }
+        //
+        // function next_page() {
+        //     page++;
+        //     window.location.replace("/admin/view/html_app_list/?page=" + page);
+        //     console.log(page);
+        // }
+
+        function on_filter(cluster) {
+            let table = document.getElementById("apps");
+            for(let i=1; i<table.getElementsByTagName("tr").length; i++) {
+                if(table.rows[i].cells[2].innerText === cluster) {
+                    table.rows[i].style.display = "table-row";
+                } else {
+                    table.rows[i].style.display = "none";
+                }
+            }
+        }
+
         $(document).ready(function () {
             $.getScript("/static/assets/dist/js/demo.js");
+
+            $("#filter_cluster li").on("click", function () {
+                on_filter($(this).text());
+            });
+
+            $("#apps").dataTable({
+                'padding': false,
+                'lengthChange':true,
+                'ordering': true,
+                'info': true,
+                'searching': false,
+                'lengthMenu': [50, 100, 200, 500],
+            })
         });
     </script>
 

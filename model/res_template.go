@@ -4,9 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
-	"github.com/ghodss/yaml"
-	"jstio/internel/logs"
-	"jstio/internel/util"
 	"os"
 	"path"
 	"path/filepath"
@@ -83,70 +80,24 @@ func (rt *ResourceTemplateRender) Render(resType ResourceType, app *Application)
 	}
 	_ = bw.Flush()
 
-	clean := util.RemoveMultiBlankLineEx(buf.String())
-
-	return []byte(clean), nil
+	return buf.Bytes(), nil
 }
 
-func (rt *ResourceTemplateRender) RenderDelta(resType ResourceType, app *Application) (string, error) {
+func (rt *ResourceTemplateRender) RenderDelta(resType ResourceType, data interface{}) ([]byte, error) {
 	t, ok := rt.deltaTemplates_[resType]
 	if !ok {
-		return "", errors.New("invalid resource type")
+		return nil, errors.New("invalid resource type")
 	}
 
 	buf := bytes.Buffer{}
 	bw := bufio.NewWriter(&buf)
-	err := t.ExecuteTemplate(bw, resType, app)
+	err := t.ExecuteTemplate(bw, resType, data)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	_ = bw.Flush()
 
-	clean := util.RemoveMultiBlankLine(buf.String())
-
-	return clean, nil
-}
-
-// 更新app，更换上游时尝试将新添加的应用。愚蠢但有用。
-func (rt *ResourceTemplateRender) TryMergeUpstreamResources(app *Application) error {
-	var (
-		err error
-	)
-
-	tagLog := logs.FuncTaggedLoggerFactory()
-
-	for idx, res := range app.Resources {
-		for _, upstream := range app.Upstream {
-			upstreamHash := upstream.Hash()
-			if !strings.Contains(res.YamlConfig, upstreamHash) {
-				deltaRes, e := rt.RenderDelta(res.ResType, upstream)
-				if e != nil {
-					err = e
-					tagLog(res.ResType).WithError(e).Errorln("app:", upstreamHash)
-					continue
-				}
-
-				yamlConfig := util.RemoveMultiBlankLineEx(app.Resources[idx].YamlConfig + "\n" + deltaRes)
-				jsonConfig, e := yaml.YAMLToJSON([]byte(yamlConfig))
-				if err != nil {
-					err = e
-					tagLog(res.ResType).WithError(e).Errorf("app: %s, upstream: %s\n", app.Hash(), upstreamHash)
-					continue
-				}
-
-				app.Resources[idx].YamlConfig = yamlConfig
-				app.Resources[idx].Config = string(jsonConfig)
-
-				if e = app.Resources[idx].Update(false); e != nil {
-					tagLog(res.ResType).WithError(e).Errorf("app: %s, upstream: %s\n", app.Hash(), upstreamHash)
-					continue
-				}
-				tagLog(res.ResType).Warningf("app: %s, upstream: %s, res:%s\n", app.Hash(), upstreamHash, deltaRes)
-			}
-		}
-	}
-
-	return err
+	return buf.Bytes(), nil
 }
 
 func GetResourceRender() *ResourceTemplateRender {

@@ -1,69 +1,115 @@
 package model
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"git.sogou-inc.com/iweb/jstio/internel"
+	"git.sogou-inc.com/iweb/jstio/internel/logs"
+	"git.sogou-inc.com/iweb/jstio/internel/util"
+	"github.com/golang/protobuf/proto"
 	"github.com/mitchellh/hashstructure"
-	"jstio/internel"
-	. "jstio/internel/logs"
+	"os"
 	"strings"
 	"time"
+	"unsafe"
 
-	"github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
+	xcore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	"github.com/envoyproxy/go-control-plane/pkg/cache"
+	"github.com/mitchellh/mapstructure"
 )
+
+type XdsAppEventPayLod struct {
+	AppID uint `json:"app_id"`
+	Event int  `json:"event"`
+}
+
+func (xap *XdsAppEventPayLod) Convert(d map[string]interface{}) error {
+	if appID, err := xap.fetchKeyInt64("app_id", d); err != nil {
+		return err
+	} else {
+		xap.AppID = uint(appID)
+	}
+
+	if event, err := xap.fetchKeyInt64("event", d); err != nil {
+		return err
+	} else {
+		xap.Event = int(event)
+	}
+
+	if xap.AppID == 0 || xap.Event == EventNone {
+		return errors.New("zero data")
+	}
+
+	return nil
+}
+
+func (xap *XdsAppEventPayLod) fetchKeyInt64(key string, d map[string]interface{}) (int64, error) {
+	v, ok := d[key]
+	if !ok {
+		return 0, errors.New("key error")
+	}
+
+	vv, ok := v.(json.Number)
+	if !ok {
+		return 0, errors.New("json number type error")
+	}
+
+	return vv.Int64()
+}
 
 type XdsCache struct {
 	cache.SnapshotCache
+	node string
 
 	discovery *Discovery
 	builder   *ResourceBuilder
+	pubSub    *PubSub
 
-	pubSub *PubSub
-
-	stop <-chan struct{}
+	done context.Context
 }
 
-func MustNewXdsCache(stop <-chan struct{}) *XdsCache {
+func MustNewXdsCache(done context.Context) *XdsCache {
 
-	tagLog := FuncTaggedLoggerFactory()
+	tagLog := logs.FuncTaggedLoggerFactory()
 
-	meta := internel.GetAfxMeta()
+	options := internel.GetAfxOption()
 
-	discovery, err := NewDiscoveryWithPrefix(meta.ETCDEndpoints, WatchKeyPrefix())
+	discovery, err := NewDiscovery(options.GetETCDEndpoints(), WatchKeyPrefix())
 	if err != nil {
 		tagLog("discovery").Panic(err)
 	}
 
 	xdsCache := &XdsCache{
 		discovery: discovery,
-		builder:   MustNewResourceBuilder(meta.ClusterName, discovery),
-		stop:      stop,
+		builder:   MustNewResourceBuilder(options.XdsManagerName, discovery),
+		done:      done,
+		node: func() string {
+			hostName, _ := os.Hostname()
+			return hostName + ":" + util.GetLocalIPV4Addr()
+		}(),
 	}
 
-	nsqds, looupds := meta.NSQDEndpoints()
-	xdsCache.pubSub, err = NewPubSub(nsqds, looupds, xdsCache)
+	xdsCache.pubSub, err = NewPubSub(options.NSQLookupdAddress, options.NSQTopic, xdsCache)
 	if err != nil {
 		tagLog("pubsub").Errorln(err)
 	}
 
-	pushMode := internel.GetAfxMeta().PushMode
-	xdsCache.SnapshotCache = cache.NewSnapshotCache(pushMode == AdsMode, xdsCache, nil)
+	xdsCache.SnapshotCache = cache.NewSnapshotCache(true, xdsCache, logs.Logger)
 
 	if err = xdsCache.preload(); err != nil {
 		tagLog("preload").Panic(err)
 	}
 
-	if err = xdsCache.discovery.WatchEndpoints(); err != nil {
-		tagLog("watch").Panic(err)
-	}
+	go xdsCache.discovery.WatchEndpoints()
 
 	xdsCache.HandleEvent()
 
 	return xdsCache
 }
 
-func (xc *XdsCache) ID(node *core.Node) string {
+func (xc *XdsCache) ID(node *xcore.Node) string {
 
 	nodeMeta := node.Metadata.GetFields()
 
@@ -77,17 +123,53 @@ func (xc *XdsCache) ID(node *core.Node) string {
 		return strings.Join([]string{appName, odinCluster, namespace, environment}, ".")
 	**********************************************************/
 
-	return strings.Join([]string{appName, odinCluster, `odin`, `sogou`}, ".")
+	return strings.Join([]string{appName, odinCluster, SOUGOSLD}, ".")
+}
+
+func (xc *XdsCache) GetCloneSnapshot(node string) (cache.Snapshot, error) {
+	src, err := xc.GetSnapshot(node)
+	if err != nil {
+		return src, err
+	}
+
+	itemCopier := func(items map[string]cache.Resource) map[string]cache.Resource {
+		cpy := make(map[string]cache.Resource, len(items))
+		for k, v := range items {
+			resCpy := proto.Clone(v)
+			cpy[k] = resCpy
+		}
+		return cpy
+	}
+
+	snapshotCpy := cache.Snapshot{}
+	snapshotCpy.Endpoints = cache.Resources{
+		Version: src.Endpoints.Version,
+		Items:   itemCopier(src.Endpoints.Items),
+	}
+	snapshotCpy.Clusters = cache.Resources{
+		Version: src.Clusters.Version,
+		Items:   itemCopier(src.Clusters.Items),
+	}
+	snapshotCpy.Routes = cache.Resources{
+		Version: src.Routes.Version,
+		Items:   itemCopier(src.Routes.Items),
+	}
+	snapshotCpy.Listeners = cache.Resources{
+		Version: src.Listeners.Version,
+		Items:   itemCopier(src.Listeners.Items),
+	}
+
+	return snapshotCpy, nil
 }
 
 func (xc *XdsCache) buildXdsResource(app *Application) (XdsResource, error) {
 	var err error
 
-	tagLog := FuncTaggedLoggerFactory()
+	tagLog := logs.FuncTaggedLoggerFactory()
 
 	xdsRes := XdsResource{}
 	for _, res := range app.Resources {
-		xRes, err := xc.builder.BuildCustomResource(app, res.ResType, []byte(res.Config))
+		xRes, err := xc.builder.BuildCustomResource(app, res.ResType, *(*[]byte)(unsafe.Pointer(&res.Config)))
 		if err != nil {
 			tagLog(res.ResType).Errorln("app:", app.Hash(), ",error:", err)
 			continue
@@ -99,41 +181,32 @@ func (xc *XdsCache) buildXdsResource(app *Application) (XdsResource, error) {
 		case ResourceTypeCluster:
 			xdsRes.Clusters = xRes
 		case ResourceTypeEndpoint:
-			// FIXME: delete this use `buildFastAppEndpoints`
 			xdsRes.Endpoints = xRes
 		case ResourceTypeListener:
 			xdsRes.Listener = xRes
 		}
 	}
 
-	if xdsRes.Clusters == nil {
-		xdsRes.Clusters, _ = xc.builder.BuildFastAppCluster(app)
-	}
-
-	if xdsRes.Endpoints == nil {
-		ends, err := xc.builder.BuildFastAppEndpoints(app)
-		if err != nil {
-			tagLog("build endpoints").Errorln("app:", app.Hash(), ",error:", err)
-		}
-		xdsRes.Endpoints = ends
-	}
-
-	if xdsRes.Routers == nil {
-		xdsRes.Routers, _ = xc.builder.BuildFastAppRoutes(app)
-	}
-
-	if xdsRes.Listener == nil {
-		xdsRes.Listener, _ = xc.builder.BuildHTTPListener(app)
-	}
-
 	return xdsRes, err
 }
 
-func (xc *XdsCache) SetApplication(app *Application) (string, error) {
-	var version string
+func (xc *XdsCache) UpdateAppXdsSnapshot(app *Application, e Event) (string, error) {
+	var (
+		version = "empty-version"
+	)
 
-	if app == nil {
+	if app == nil || e == EventNone {
 		return version, errors.New("invalid param")
+	}
+
+	if e == EventApplicationCreate {
+		return xc.NewApplicationSnapshot(app)
+	}
+
+	hash := app.Hash()
+	snapshot, err := xc.GetSnapshot(hash)
+	if err != nil {
+		return version, fmt.Errorf("app:%s get snapshot error", hash)
 	}
 
 	xdsRes, err := xc.buildXdsResource(app)
@@ -141,19 +214,51 @@ func (xc *XdsCache) SetApplication(app *Application) (string, error) {
 		return version, err
 	}
 
-	version = xc.ResVersion(xdsRes)
-	snapshot := cache.NewSnapshot(version, xdsRes.Endpoints, xdsRes.Clusters, xdsRes.Routers, xdsRes.Listener)
-	if err = snapshot.Consistent(); err != nil {
-		return version, err
+	switch e {
+	case
+		/* endpoint changed */
+		EventResEndpointCreate,
+		EventResEndpointUpdate,
+		EventResEndpointDelete,
+		/* cluster changed */
+		EventResClusterCreate,
+		EventResClusterUpdate,
+		EventResClusterDelete:
+		version = xc.ResVersion(xdsRes.Endpoints, xdsRes.Clusters)
+		snapshot.Endpoints = cache.NewResources(version, xdsRes.Endpoints)
+		snapshot.Clusters = cache.NewResources(version, xdsRes.Clusters)
+	case
+		EventResRouteCreate,
+		EventResRouteUpdate,
+		EventResRouteDelete:
+		fallthrough
+	case
+		//EventApplicationCreate,
+		EventApplicationUpdate,
+		EventApplicationDelete:
+		fallthrough
+	case
+		EventResListenerCreate,
+		EventResListenerUpdate,
+		EventResListenerDelete:
+		fallthrough
+	default:
+		version = xc.ResVersion(xdsRes)
+		snapshot.Endpoints = cache.NewResources(version, xdsRes.Endpoints)
+		snapshot.Clusters = cache.NewResources(version, xdsRes.Clusters)
+		snapshot.Routes = cache.NewResources(version, xdsRes.Routers)
+		snapshot.Listeners = cache.NewResources(version, xdsRes.Listener)
 	}
-	err = xc.SetSnapshot(app.Hash(), snapshot)
+
+	err = xc.SetSnapshot(hash, snapshot)
+
 	return version, err
 }
 
 func (xc *XdsCache) MeshEndpointRefresh(app Selector) error {
 	var err error
 
-	tagLog := FuncTaggedLoggerFactory()
+	tagLog := logs.FuncTaggedLoggerFactory()
 
 	appHash := app.Hash()
 
@@ -187,10 +292,9 @@ func (xc *XdsCache) MeshEndpointRefresh(app Selector) error {
 
 func (xc *XdsCache) appEndpointRefresh(app *Application) error {
 	if app == nil {
-		return errors.New("invalid param")
+		return errors.New("invalid app param")
 	}
-
-	tagLog := FuncTaggedLoggerFactory()
+	tagLog := logs.TaggedLoggerFactory("app endpoint refresh")
 	appHash := app.Hash()
 
 	snapshot, err := xc.GetSnapshot(appHash)
@@ -198,17 +302,15 @@ func (xc *XdsCache) appEndpointRefresh(app *Application) error {
 		return err
 	}
 
-	//res, _ := xc.builder.BuildFastAppEndpoints(app)
 	res, _ := xc.builder.BuildCustomAppEndpoints(app)
 
 	oldEndpointVersion, newEndpointVersion := snapshot.GetVersion(cache.EndpointType), xc.ResVersion(res)
-
 	if oldEndpointVersion == newEndpointVersion {
 		tagLog("version compare").Println("app:", appHash, " same version")
 		return nil
 	}
 
-	tagLog("version compare").Warning("app:", appHash, oldEndpointVersion, "!=", newEndpointVersion)
+	tagLog("version compare").Warningln("app:", appHash, oldEndpointVersion, " != ", newEndpointVersion)
 
 	snapshot.Endpoints = cache.NewResources(newEndpointVersion, res)
 
@@ -222,35 +324,41 @@ func (xc *XdsCache) appEndpointRefresh(app *Application) error {
 func (xc *XdsCache) preload() error {
 	var err error
 
-	tagLog := FuncTaggedLoggerFactory()
+	tagLog := logs.FuncTaggedLoggerFactory()
 
-	//activeApps, err := CompleteActiveApps()
-	//if err != nil {
-	//	return err
-	//}
 	activeApps := GetApplicationCache().GetActiveApplications()
 
 	for appHash, app := range activeApps {
-		xdsRes, err := xc.buildXdsResource(app)
-		if err != nil {
-			tagLog("build resource").Errorln("app:", appHash, ",error:", err)
+		if _, err = xc.NewApplicationSnapshot(app); err != nil {
+			tagLog("build snapshot").Errorln("app:", appHash, "error:", err)
 		}
-
-		// FIXME: use endpoint as init version.
-		version := xc.ResVersion(xdsRes.Endpoints)
-		snapshot := cache.NewSnapshot(version, xdsRes.Endpoints, xdsRes.Clusters, xdsRes.Routers, xdsRes.Listener)
-
-		// FIXME: maybe request flood ???
-		if err = snapshot.Consistent(); err != nil {
-			tagLog("snapshot consistent").Errorln("app:", appHash, ",error:", err)
-			continue
-		}
-
-		_ = xc.SetSnapshot(appHash, snapshot)
-
 	}
 
 	return err
+}
+
+func (xc *XdsCache) NewApplicationSnapshot(app *Application) (version string, err error) {
+	tagLog := logs.TaggedLoggerFactory("new application snapshot")
+	xdsRes, err := xc.buildXdsResource(app)
+	appHash := app.Hash()
+
+	if err != nil {
+		tagLog("build resource").Errorln("app:", appHash, ",error:", err)
+		return
+	}
+
+	// FIXME: use listener as init version ?
+	version = xc.ResVersion(xdsRes.Listener)
+	snapshot := cache.NewSnapshot(version, xdsRes.Endpoints, xdsRes.Clusters, xdsRes.Routers, xdsRes.Listener, nil)
+
+	// FIXME: maybe request flood ???
+	if err = snapshot.Consistent(); err != nil {
+		tagLog("snapshot consistent").Errorln("app:", appHash, ",error:", err)
+		return
+	}
+
+	err = xc.SetSnapshot(appHash, snapshot)
+	return
 }
 
 func (xc *XdsCache) ResVersion(res ...interface{}) string {
@@ -267,17 +375,15 @@ func (xc *XdsCache) ResVersion(res ...interface{}) string {
 }
 
 func (xc *XdsCache) dummyVersion(err error) string {
-	Logger.Errorln("oops: should never be here:", err)
+	logs.Logger.Errorln("oops: should never be here:", err)
 	return fmt.Sprintf("%020s", time.Now().Format("2006-01-02 15:04"))
 }
 
 func (xc *XdsCache) HandleEvent() {
 
-	tagLog := FuncTaggedLoggerFactory()
+	tagLog := logs.FuncTaggedLoggerFactory()
 
 	eventNotifier := GetEventNotifier()
-
-	whoImI := internel.GetAfxMeta().Node
 
 	go func() {
 		for {
@@ -292,23 +398,26 @@ func (xc *XdsCache) HandleEvent() {
 
 					_ = xc.MeshEndpointRefresh(app)
 
-				} else if d.E > EventNone && d.E <= EventResEndpointDelete {
+				} else if d.E > EventNone && d.E < EventResEndpointReFetch {
 					app, ok := d.Data.(*Application)
 					if !ok {
 						tagLog("assert").Errorln("event", d.E)
 						continue
 					}
 
-					version, err := xc.SetApplication(app)
+					version, err := xc.UpdateAppXdsSnapshot(app, d.E)
 					if err != nil {
 						tagLog("set snapshot").Errorln("app:", app.Hash(), ",error:", err)
 					} else {
 
 						msg := XdsClusterMsg{
 							MsgType: int(d.E),
-							Sender:  whoImI,
+							Sender:  xc.node,
 							Version: version,
-							Payload: app.ID,
+							Payload: XdsAppEventPayLod{
+								AppID: app.ID,
+								Event: d.E,
+							},
 						}
 
 						if err = xc.pubSub.Publish(&msg); err != nil {
@@ -318,7 +427,7 @@ func (xc *XdsCache) HandleEvent() {
 						}
 					}
 				}
-			case <-xc.stop:
+			case <-xc.done.Done():
 				xc.pubSub.DeleteChannel()
 				tagLog("stop").Warning("will stopped")
 				return
@@ -328,48 +437,64 @@ func (xc *XdsCache) HandleEvent() {
 }
 
 func (xc *XdsCache) HandleClusterMsg(msg *XdsClusterMsg) {
-	tagLog := FuncTaggedLoggerFactory()
+	tagLog := logs.TaggedLoggerFactory("[NSQ-MESSAGE]")
 
-	if msg.Sender == internel.GetAfxMeta().Node {
+	if msg.Sender == xc.node {
 		tagLog("self").Println("pass")
+		return
+	}
+
+	if msg.Sender == PodCleanerSender {
+		md, ok := msg.Payload.(map[string]interface{})
+		if !ok {
+			tagLog("pod_cleaner").Errorln("invalid payload")
+		} else {
+			tagLog("pod_cleaner").Println(md["hash"])
+			pw := PodWait{}
+			if err := mapstructure.Decode(md, &pw); err == nil {
+				ct := md["created_at"].(string)
+				if t, e := time.Parse(time.RFC3339, ct); e == nil {
+					pw.CreatedAt = t
+					appWaitCache.Put(&pw)
+
+					if GetEventNotifier().Push(EventResEndpointReFetch, pw.ToApplication()) == nil {
+						tagLog("endpoint deleting").Println("success:", pw.Hash, "ip:", pw.Addr)
+					}
+				}
+			}
+		}
 		return
 	}
 
 	GetApplicationCache().ReBuild()
 
-	appId, ok := msg.Payload.(float64)
-	if !ok || appId == 0 {
-		tagLog("assert payload").Errorln("invalid payload")
+	tag := `nsq-consume-app-event`
+	md, ok := msg.Payload.(map[string]interface{})
+	if !ok {
+		tagLog(tag).Errorln("invalid payload")
 		return
 	}
 
-	app, err := GetApplicationById(uint(appId))
+	payload := XdsAppEventPayLod{}
+	if err := payload.Convert(md); err != nil {
+		tagLog(tag).WithError(err).Errorln("convert error")
+		return
+	}
+
+	app, err := GetApplicationByID(payload.AppID)
 	if err != nil {
 		tagLog("get app").Errorln(err)
 		return
 	}
 
-	xdsRes, err := xc.buildXdsResource(&app)
+	appHash := app.Hash()
+	version, err := xc.UpdateAppXdsSnapshot(&app, payload.Event)
 	if err != nil {
-		tagLog("build resource").Errorln(err)
+		tagLog("update xds snapshot").WithError(err).Errorln("update snapshot failed! app:", appHash)
 		return
 	}
-
-	version := xc.ResVersion(xdsRes)
-	if version != msg.Version { // FIXME: miss match
-		tagLog("version mismatch").Errorln("local version:", version, ",msg version:", msg.Version)
-		return
-	}
-
-	snapshot := cache.NewSnapshot(version, xdsRes.Endpoints, xdsRes.Clusters, xdsRes.Routers, xdsRes.Listener)
-	if err = snapshot.Consistent(); err != nil {
-		tagLog("consistent").Errorln(err)
-		return
-	}
-
-	err = xc.SetSnapshot(app.Hash(), snapshot)
-	if err != nil {
-		tagLog("set snapshot").Errorln(err)
+	if version != msg.Version {
+		tagLog("version mismatch").Errorln("local version:", version, "message version:", msg.Version, "app:", appHash)
 	}
 
 	tagLog("done").Println(app.Hash(), "update success")

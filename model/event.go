@@ -14,7 +14,7 @@ var (
 	ErrBusOverFlow = errors.New("event_notifier: buffer too many")
 )
 
-type Event int
+type Event = int
 
 const (
 	// None Event
@@ -39,6 +39,11 @@ const (
 	EventResEndpointCreate
 	EventResEndpointUpdate
 	EventResEndpointDelete
+
+	// cluster CURD
+	EventResClusterCreate
+	EventResClusterUpdate
+	EventResClusterDelete
 
 	EventResEndpointReFetch
 )

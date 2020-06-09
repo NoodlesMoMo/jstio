@@ -1,10 +1,18 @@
-{{ define "endpoint" }}
-- cluster_name: {{ $.Hash }}
+{{- define "endpoint" -}}
+{{- range $protocol := .Protocols }}
+  {{- range $upstream := $.Upstream }}
+    {{- range $upstreamProto := $upstream.Protocols }}
+      {{- if eq $upstreamProto.Protocol $protocol.Protocol }}
+- cluster_name: {{ $upstreamProto.Domain }}
   endpoints:
     - lb_endpoints:
         - endpoint:
             address:
               socket_address:
-                address: 127.0.0.1
-                port_value: 65535
-{{ end }}
+                address: 127.0.0.1 #dummy address
+                port_value: {{ $upstreamProto.ProxyPort }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- end -}}

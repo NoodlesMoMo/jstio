@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
-	. "jstio/internel/logs"
+	"git.sogou-inc.com/iweb/jstio/internel/logs"
 
 	"go.etcd.io/etcd/client"
 )
@@ -22,14 +23,10 @@ var (
 
 type Discovery struct {
 	cli    client.Client
-	prefix string
+	prefix []string
 }
 
-func NewDiscovery(endpoints []string) (*Discovery, error) {
-	return NewDiscoveryWithPrefix(endpoints, defaultRegistryPrefix)
-}
-
-func NewDiscoveryWithPrefix(endpoints []string, prefix string) (*Discovery, error) {
+func NewDiscovery(endpoints []string, prefix []string) (*Discovery, error) {
 	var err error
 
 	inst := &Discovery{
@@ -60,7 +57,7 @@ func (d *Discovery) FetchEndpoints(selector Selector) ([]Endpoint, error) {
 		})
 
 	if err != nil && !client.IsKeyNotFound(err) {
-		Logger.WithField(`discovery`, `fetch endpoints`).Errorln(err)
+		logs.Logger.WithField(`discovery`, `fetch endpoints`).Errorln(err)
 		return endpoints, err
 	}
 
@@ -75,6 +72,12 @@ func (d *Discovery) FetchEndpoints(selector Selector) ([]Endpoint, error) {
 			seps := strings.Split(value, ":")
 			endpoint.Address = seps[0]
 			endpoint.Port = 80
+
+			// FIXME: appWait filter
+			if appWaitCache.IsDeleting(selector.Hash(), endpoint.Address) {
+				logs.Logger.WithField(`discovery`, `pod-wait`).Warningln("hash:", selector.Hash(), "addr:", endpoint.Address)
+				continue
+			}
 			endpoints = append(endpoints, endpoint)
 		}
 	}
@@ -100,7 +103,7 @@ func (d *Discovery) FetchEndpointsAgg(selectors ...Selector) (map[string][]Endpo
 	for _, selector := range selectors {
 		resp, err := keyAPI.Get(ctx, selector.SelectorFormat(), &options)
 		if err != nil || resp == nil {
-			Logger.WithField(`discovery`, `fetch endpoints ex`).Errorln(err)
+			logs.Logger.WithField(`discovery`, `fetch endpoints ex`).Errorln(err)
 			continue
 		}
 
@@ -108,8 +111,14 @@ func (d *Discovery) FetchEndpointsAgg(selectors ...Selector) (map[string][]Endpo
 			value := strings.TrimSpace(node.Value)
 			if value != "" {
 				rk := selector.Hash()
+				addr := strings.Split(value, ":")[0]
+				// FIXME: add appWait filter
+				if appWaitCache.IsDeleting(rk, addr) {
+					logs.Logger.WithField(`discovery`, `pod-wait`).Warningln("hash:", rk, " addr:", addr)
+					continue
+				}
 				result[rk] = append(result[rk], Endpoint{
-					Address: strings.Split(value, ":")[0],
+					Address: addr,
 					Port:    80,
 				})
 			}
@@ -119,40 +128,49 @@ func (d *Discovery) FetchEndpointsAgg(selectors ...Selector) (map[string][]Endpo
 	return result, err
 }
 
-func (d *Discovery) WatchEndpoints() error {
-	var err error
-
-	watcher := client.NewKeysAPI(d.cli).Watcher(d.prefix, &client.WatcherOptions{
-		Recursive: true,
-	})
+func (d *Discovery) WatchEndpoints() {
+	tagLog := logs.FuncTaggedLoggerFactory()
 
 	notifier := GetEventNotifier()
 
-	go func() {
-		for {
-			res, err := watcher.Next(context.Background())
-			if err != nil {
-				break
-			}
+	wg := sync.WaitGroup{}
 
-			if res.PrevNode != nil && res.PrevNode.Value == res.Node.Value {
-				continue
-			}
+	wg.Add(len(d.prefix))
 
-			app := &Application{}
-			err = app.SelectorScan(res.Node.Key)
-			if err != nil {
-				Logger.WithField(`discovery`, `watch`).Errorln(err)
-				continue
-			}
+	for _, prefix := range d.prefix {
+		watcher := client.NewKeysAPI(d.cli).Watcher(prefix, &client.WatcherOptions{
+			Recursive: true,
+		})
 
-			// TODO: do best later ...
-			switch res.Action {
-			case `set`, `update`, `expire`, `delete`:
-				_ = notifier.Push(EventResEndpointReFetch, app)
-			}
-		}
-	}()
+		go func(prefix string) {
+			defer wg.Done()
 
-	return err
+			for {
+				res, err := watcher.Next(context.Background())
+				if err != nil {
+					tagLog("watch goroutine").WithError(err).Fatalln("watch error, key:", prefix)
+				}
+
+				if res.PrevNode != nil && res.PrevNode.Value == res.Node.Value {
+					continue
+				}
+
+				app := &Application{}
+				err = app.SelectorScan(res.Node.Key)
+				if err != nil {
+					tagLog(`selector scan`).Errorln(err)
+					continue
+				}
+
+				// TODO: do best later ...
+				switch res.Action {
+				case `set`, `update`, `expire`, `delete`:
+					tagLog("watch action").Println(">>>>>action:", res.Action, res.Node.Key)
+					_ = notifier.Push(EventResEndpointReFetch, app)
+				}
+			}
+		}(prefix)
+	}
+
+	wg.Wait()
 }

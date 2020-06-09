@@ -1,9 +1,9 @@
 package dashboard
 
 import (
+	"git.sogou-inc.com/iweb/jstio/dashboard/handler"
 	"github.com/qiangxue/fasthttp-routing"
 	"github.com/valyala/fasthttp"
-	"jstio/dashboard/handler"
 )
 
 var (
@@ -25,7 +25,17 @@ func init() {
 	)
 	adminGroup.Any("/view/<action>/<res>", handler.AdminHandler)
 	adminGroup.Any("/data/<action>/<res>", handler.AdminHandler)
-	adminGroup.Any("/diag", handler.DiagnoseHandler)
+	adminGroup.Any("/diag/apps", handler.DiagnoseAppsHandler)
+	adminGroup.Any("/diag/waits", handler.DiagnosePodWaitHandler)
+	adminGroup.Any("/healthy", handler.HealthyHandler)
+
+	adminGroup.Any("/route/get", handler.GetRoutes)
+	adminGroup.Any("/route/update", handler.UpdateRoutes)
+	adminGroup.Any("/cluster/list", handler.GetClusterList)
+	adminGroup.Get("/topology", handler.ApplicationsTopologyHandler)
+
+	router_.Any("/api/v1/cluster/get", handler.GetClusterHandler)
+	router_.Any("/api/v1/app/get", handler.GetAppHandler)
 
 	pprofGroup := router_.Group("/debug/pprof")
 	pprofGroup.To("GET,POST", "/cmdline", handler.CommandLine)

@@ -17,11 +17,11 @@ func MigrateHistoryTables() {
 
 type History struct {
 	ID        uint      `gorm:"not null; primary_key" json:"id"`
-	EntityId  uint      `gorm:"not null; column:entity_id" json:"entity_id"`
+	EntityID  uint      `gorm:"not null; column:entity_id" json:"entity_id"`
 	Entity    string    `gorm:"not null" json:"entity"`
 	Operate   string    `gorm:"not null;" json:"operate"`
 	Status    string    `gorm:"not null;" json:"status"`
-	UserId    string    `gorm:"not null;" json:"user_id"`
+	UserID    string    `gorm:"not null;" json:"user_id"`
 	UserName  string    `gorm:"not null;" json:"user_name"`
 	CreatedAt time.Time `gorm:"not null; index:idx_create" json:"create_at"`
 }
@@ -29,9 +29,9 @@ type History struct {
 func RecordSuccess(userId, userName, entity, operate string, entityId uint) {
 	now := time.Now()
 	GetDBInstance().Create(&History{
-		EntityId:  entityId,
+		EntityID:  entityId,
 		Entity:    entity,
-		UserId:    userId,
+		UserID:    userId,
 		UserName:  userName,
 		Operate:   operate,
 		Status:    OperateSuccess,
@@ -39,12 +39,12 @@ func RecordSuccess(userId, userName, entity, operate string, entityId uint) {
 	})
 }
 
-func RecordFailure(userId, userName, entity, operate string, entityId uint) {
+func RecordFailure(userID, userName, entity, operate string, entityID uint) {
 	now := time.Now()
 	GetDBInstance().Create(&History{
-		EntityId:  entityId,
+		EntityID:  entityID,
 		Entity:    entity,
-		UserId:    userId,
+		UserID:    userID,
 		UserName:  userName,
 		Operate:   operate,
 		Status:    OperateFailure,

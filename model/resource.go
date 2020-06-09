@@ -27,12 +27,6 @@ type Resource struct {
 	YamlConfig string `gorm:"not null; type:LONGTEXT;" json:"yaml_config"`
 }
 
-func (r *Resource) AfterCreate() error {
-	var err error
-	defer r.historyRecord(err, OperateCreate)
-	return err
-}
-
 func (r *Resource) AfterUpdate() error {
 	var err error
 	defer r.historyRecord(err, OperateUpdate)
@@ -52,6 +46,8 @@ func (r *Resource) AfterDelete() error {
 		e = EventResListenerDelete
 	case ResourceTypeEndpoint:
 		e = EventResEndpointDelete
+	case ResourceTypeCluster:
+		e = EventResClusterDelete
 	}
 
 	GetApplicationCache().ReBuild()
@@ -61,6 +57,11 @@ func (r *Resource) AfterDelete() error {
 	return err
 }
 
+func (r *Resource) GetByAppIDAndType() (err error) {
+	err = GetDBInstance().Where("app_id = ? and res_type = ?", r.AppID, r.ResType).First(&r).Error
+
+	return
+}
 func (r *Resource) Create() error {
 	err := GetDBInstance().Create(r).Error
 
@@ -85,10 +86,12 @@ func (r *Resource) Update(notify bool) error {
 		e = EventResListenerUpdate
 	case ResourceTypeEndpoint:
 		e = EventResEndpointUpdate
+	case ResourceTypeCluster:
+		e = EventResClusterUpdate
 	}
 
 	if notify {
-		app, err := GetApplicationById(uint(r.AppID))
+		app, err := GetApplicationByID(uint(r.AppID))
 		if err != nil {
 			return err
 		}
@@ -98,7 +101,7 @@ func (r *Resource) Update(notify bool) error {
 	return err
 }
 
-func GetResourceById(id uint) (Resource, error) {
+func GetResourceByID(id uint) (Resource, error) {
 	var err error
 
 	res := Resource{Model: gorm.Model{ID: id}}
@@ -108,10 +111,10 @@ func GetResourceById(id uint) (Resource, error) {
 }
 
 func (r *Resource) historyRecord(err error, operate string) {
-	app, _ := GetApplicationById(uint(r.AppID))
+	app, _ := GetApplicationByID(uint(r.AppID))
 	if err == nil {
-		RecordSuccess(app.UserId, app.UserName, r.ResType, operate, r.ID)
+		RecordSuccess(app.UserID, app.UserName, r.ResType, operate, r.ID)
 	} else {
-		RecordFailure(app.UserId, app.UserName, r.ResType, operate, r.ID)
+		RecordFailure(app.UserID, app.UserName, r.ResType, operate, r.ID)
 	}
 }
